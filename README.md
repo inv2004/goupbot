@@ -9,5 +9,5 @@ Supports:
 - [x] persistent storage
 - [x] request feed via surf-browser (optional)
 - [x] html2md conversion (optional)
-- [ ] fast reply
+- [ ] fast reply from telegram
 
