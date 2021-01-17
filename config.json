@@ -1,0 +1,8 @@
+{
+  "telegram": {
+    "token": "YourBotToken"
+  },
+  "feed": {
+    "delay": 60
+  }
+}
