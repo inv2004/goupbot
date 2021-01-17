@@ -2,6 +2,8 @@
 
 Telegram Upwork Bot
 
+[@upwork_free_bot](https://t.me/upwork_free_bot)
+
 Supports:
 - [x] multiple users
 - [x] persistent storage
