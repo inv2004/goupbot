@@ -28,7 +28,7 @@ const (
 
 type UserInfo struct {
 	ID             string
-	ChannelId      int64
+	ChannelID      int64
 	WaitingFeedUrl WaitingFeedKind
 	Feeds          map[string]bool
 }
@@ -72,5 +72,8 @@ func init() {
 		log.Panic(err)
 	}
 	config = Config{}
-	json.Unmarshal(str, &config)
+	err = json.Unmarshal(str, &config)
+	if err != nil {
+		log.Panic(err)
+	}
 }

@@ -63,9 +63,9 @@ func fetchRss(userInfo upbot.UserInfo, url string, up2tel chan upbot.JobInfo, dr
 	newCounter := 0
 
 	for _, item := range feed.Items {
-		key := (upbot.JobInfoKey{userInfo.ID, item.GUID}).Key()
+		key := upbot.JobInfoKey{User: userInfo.ID, GUID: item.GUID}
 
-		hasKey, err := pudge.Has(upbot.DBPathJobs, key)
+		hasKey, err := pudge.Has(upbot.DBPathJobs, key.Key())
 		if err != nil {
 			log.Panic(err)
 		}
@@ -73,11 +73,12 @@ func fetchRss(userInfo upbot.UserInfo, url string, up2tel chan upbot.JobInfo, dr
 			newCounter += 1
 			if !dryRun {
 				job := upbot.JobInfo{}
+				job.Key = key
 				job.RSS = *item
 				up2tel <- job
 				log.Println("sending job:", key)
 			} else {
-				err := pudge.Set(upbot.DBPathJobs, key, time.Time{})
+				err := pudge.Set(upbot.DBPathJobs, key.Key(), time.Time{})
 				if err != nil {
 					log.Panic(err)
 				}
@@ -163,7 +164,7 @@ func processMessage(msg *tgbotapi.Message, up2tel chan upbot.JobInfo) (reply str
 	case "/start":
 		userInfo := upbot.UserInfo{}
 		userInfo.ID = msg.From.UserName
-		userInfo.ChannelId = msg.Chat.ID
+		userInfo.ChannelID = msg.Chat.ID
 		userInfo.Feeds = make(map[string]bool)
 		err := pudge.Set(upbot.DBPathUsers, user, userInfo)
 		if err != nil {
@@ -325,6 +326,9 @@ func telegram(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
 	u.Timeout = 60
 
 	updates, err := bot.GetUpdatesChan(u)
+	if err != nil {
+		log.Panic(err)
+	}
 
 	for {
 		select {
@@ -340,7 +344,10 @@ func telegram(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, reply)
 			msg.ReplyToMessageID = update.Message.MessageID
 
-			bot.Send(msg)
+			_, err := bot.Send(msg)
+			if err != nil {
+				log.Panic(err)
+			}
 		case up := <-up2tel:
 			log.Println("recv:", up.RSS.GUID)
 
@@ -355,7 +362,13 @@ func telegram(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
 			text = strings.ReplaceAll(text, "<br>", "\n")
 			text = strings.ReplaceAll(text, "&nbsp;", " ")
 
-			msg := tgbotapi.NewMessage(81258084, text)
+			userInfo := upbot.UserInfo{}
+			res := pudge.Get(upbot.DBPathUsers, up.Key.User, &userInfo)
+			if res != nil {
+				log.Panic(res)
+			}
+
+			msg := tgbotapi.NewMessage(userInfo.ChannelID, text)
 			msg.ParseMode = tgbotapi.ModeHTML
 			msg.DisableWebPagePreview = true
 			_, err := bot.Send(msg)
@@ -363,7 +376,10 @@ func telegram(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
 				appendMsgToLog(text, err.Error())
 				log.Panic(err)
 			}
-			pudge.Set(upbot.DBPathJobs, up.Key.Key(), time.Now())
+			ret := pudge.Set(upbot.DBPathJobs, up.Key.Key(), time.Now())
+			if ret != nil {
+				log.Panic(err)
+			}
 		}
 	}
 }
