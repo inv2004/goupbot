@@ -120,7 +120,6 @@ func fetchUser(wg *sync.WaitGroup, ctx context.Context, user string, up2tel chan
 				if err != nil {
 					log.Panic(err)
 				}
-				time.Sleep(upbot.GetDelay())
 			}
 
 			if !hasActiveFeeds {
@@ -315,7 +314,7 @@ func appendMsgToLog(text string, errText string) {
 
 func telegram(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo) {
 	defer wg.Done()
-	defer log.Println("Telegram is going down")
+	defer log.Println("Telegram is down")
 
 	bot, err := tgbotapi.NewBotAPI(upbot.GetConfig().Telegram.Token)
 	if err != nil {
@@ -368,6 +367,9 @@ func telegram(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo
 				log.Panic(res)
 			}
 
+			if len(text) > 4096 {
+				text = text[:4092] + " ..."
+			}
 			msg := tgbotapi.NewMessage(userInfo.ChannelID, text)
 			msg.ParseMode = tgbotapi.ModeHTML
 			msg.DisableWebPagePreview = true
