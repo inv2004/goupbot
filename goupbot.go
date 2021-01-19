@@ -9,10 +9,10 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	upbot "./upbot"
-	md "github.com/JohannesKaufmann/html-to-markdown"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/mmcdole/gofeed"
 	"github.com/recoilme/pudge"
@@ -21,10 +21,17 @@ import (
 	// "github.com/upwork/golang-upwork/api/routers/jobs/search"
 )
 
-func fetchRss(ctx context.Context, userInfo upbot.UserInfo, url string, up2tel chan upbot.JobInfo, dryRun bool) error {
+type BotStruct struct {
+	wg        *sync.WaitGroup
+	ctx       context.Context
+	up2tel    chan upbot.JobInfo
+	stop2user chan string
+}
+
+func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt BotStruct) error {
 	log.Println("fetching for", userInfo.ID, "url:", url)
 
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(bt.ctx, 10*time.Second)
 	defer cancel()
 
 	fp := gofeed.NewParser()
@@ -51,7 +58,7 @@ func fetchRss(ctx context.Context, userInfo upbot.UserInfo, url string, up2tel c
 				job.Key = key
 				job.RSS = *item
 				log.Println("sending job:", key)
-				up2tel <- job
+				bt.up2tel <- job
 			} else {
 				pubVal := upbot.JobValue{Published: *item.PublishedParsed, Processed: time.Time{}}
 				err := pudge.Set(upbot.DBPathJobs, key.Key(), pubVal)
@@ -71,9 +78,10 @@ func fetchRss(ctx context.Context, userInfo upbot.UserInfo, url string, up2tel c
 	return nil
 }
 
-func fetchUser(wg *sync.WaitGroup, ctx context.Context, user string, up2tel chan upbot.JobInfo) {
+func fetchUser(user string, bt BotStruct) {
+	defer bt.wg.Done()
 	defer log.Println("fetchUser[", user, "] is going down")
-	defer wg.Done()
+
 	for {
 		select {
 		case <-time.After(upbot.GetDelay()):
@@ -83,14 +91,18 @@ func fetchUser(wg *sync.WaitGroup, ctx context.Context, user string, up2tel chan
 				log.Panic(err)
 			}
 
-			hasActiveFeeds := false
+			if !userInfo.Active {
+				log.Print("WARN: user is not active ", userInfo.ID)
+				return
+			}
 
+			hasActiveFeeds := false
 			for url, active := range userInfo.Feeds {
 				if !active {
 					continue
 				}
 				hasActiveFeeds = true
-				err := fetchRss(ctx, userInfo, url, up2tel, false)
+				err := fetchRss(userInfo, url, false, bt)
 				if err != nil {
 					log.Panic(err)
 				}
@@ -100,14 +112,18 @@ func fetchUser(wg *sync.WaitGroup, ctx context.Context, user string, up2tel chan
 				log.Print("WARN: no active feeds found for user ", userInfo.ID)
 				return
 			}
-		case <-ctx.Done():
+		case <-bt.ctx.Done():
 			return
+		case userToCancel := <-bt.stop2user:
+			if user == userToCancel {
+				return
+			}
 		}
 	}
 }
 
-func upwork(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo) {
-	defer wg.Done()
+func upwork(bt BotStruct) {
+	defer bt.wg.Done()
 
 	keys, err := pudge.Keys(upbot.DBPathUsers, nil, 0, 0, true)
 	if err != nil {
@@ -115,12 +131,12 @@ func upwork(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo) 
 	}
 
 	for _, user := range keys {
-		wg.Add(1)
-		go fetchUser(wg, ctx, string(user), up2tel)
+		bt.wg.Add(1)
+		go fetchUser(string(user), bt)
 	}
 }
 
-func processMessage(wg *sync.WaitGroup, ctx context.Context, msg *tgbotapi.Message, up2tel chan upbot.JobInfo) (reply string) {
+func processMessage(msg *tgbotapi.Message, bt BotStruct) (reply string) {
 	user := msg.From.UserName
 	text := msg.Text
 	// words := strings.Fields(text)
@@ -147,12 +163,29 @@ func processMessage(wg *sync.WaitGroup, ctx context.Context, msg *tgbotapi.Messa
 		userInfo := upbot.UserInfo{}
 		userInfo.ID = msg.From.UserName
 		userInfo.ChannelID = msg.Chat.ID
+		userInfo.Active = true
 		userInfo.Feeds = make(map[string]bool)
 		err := pudge.Set(upbot.DBPathUsers, user, userInfo)
 		if err != nil {
 			log.Panic(err)
 		}
 		reply = "Thank you for subscribing the bot.\n\nPlease add feed channels by /add command or /help for help"
+	case "/stop":
+		userInfo := upbot.UserInfo{}
+		err := pudge.Get(upbot.DBPathUsers, msg.From.UserName, userInfo)
+		if err != nil {
+			if errors.Is(err, pudge.ErrKeyNotFound) {
+				reply = "nothing to stop"
+				return
+			}
+		}
+		userInfo.Active = false
+		err = pudge.Set(upbot.DBPathUsers, user, userInfo)
+		if err != nil {
+			log.Panic(err)
+		}
+		bt.stop2user <- msg.From.UserName
+		reply = "Your feed stopped, Type /start to continue"
 	case "/ping":
 		reply = "pong"
 	case "/add":
@@ -226,7 +259,7 @@ func processMessage(wg *sync.WaitGroup, ctx context.Context, msg *tgbotapi.Messa
 			if err != nil {
 				log.Panic(err)
 			}
-			err = fetchRss(ctx, userInfo, url, up2tel, true)
+			err = fetchRss(userInfo, url, true, bt)
 			if err != nil {
 				reply = err.Error()
 				return
@@ -237,11 +270,9 @@ func processMessage(wg *sync.WaitGroup, ctx context.Context, msg *tgbotapi.Messa
 				log.Panic(err)
 			}
 
-			if len(userInfo.Feeds) > 0 {
-				go func() {
-					wg.Add(1)
-					fetchUser(wg, ctx, userInfo.ID, up2tel)
-				}()
+			if len(userInfo.Feeds) == 1 {
+				bt.wg.Add(1)
+				go fetchUser(userInfo.ID, bt)
 			}
 
 			reply = "Added succesfully. Default pull interval is 1 minute"
@@ -262,17 +293,6 @@ func processMessage(wg *sync.WaitGroup, ctx context.Context, msg *tgbotapi.Messa
 		}
 	}
 	return
-}
-
-func html2md(html string) (string, error) {
-	converter := md.NewConverter("", true, nil)
-
-	markdown, err := converter.ConvertString(html)
-	if err != nil {
-		return "", err
-	}
-	return markdown, nil
-
 }
 
 func appendMsgToLog(text string, errText string) {
@@ -305,6 +325,9 @@ func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo 
 	}
 
 	_, err = bot.Send(msg)
+	if err != nil {
+		appendMsgToLog(text, err.Error())
+	}
 	return
 }
 
@@ -319,8 +342,8 @@ func SendMsgToUser(bot *tgbotapi.BotAPI, user string, text string) error {
 	return err
 }
 
-func telegram(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo) {
-	defer wg.Done()
+func telegram(bt BotStruct) {
+	defer bt.wg.Done()
 	defer log.Println("Telegram is down")
 
 	bot, err := tgbotapi.NewBotAPI(upbot.GetConfig().Telegram.Token)
@@ -349,13 +372,13 @@ func telegram(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo
 
 			log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
 
-			reply := processMessage(wg, ctx, update.Message, up2tel)
+			reply := processMessage(update.Message, bt)
 
 			err := SendMsgToChannel(bot, update.Message.Chat.ID, reply, update.Message.MessageID)
 			if err != nil {
 				log.Panic(err)
 			}
-		case up := <-up2tel:
+		case up := <-bt.up2tel:
 			log.Println("recv:", up.Key)
 
 			err := SendMsgToUser(bot, up.Key.User, up.RSS.Content)
@@ -369,16 +392,21 @@ func telegram(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo
 			if ret != nil {
 				log.Panic(err)
 			}
-		case <-ctx.Done():
+		case <-bt.ctx.Done():
 			return
 		}
 	}
 }
 
 func main() {
-	wg := &sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
 
-	up2tel := make(chan upbot.JobInfo)
+	bt := BotStruct{
+		wg:        &sync.WaitGroup{},
+		ctx:       ctx,
+		up2tel:    make(chan upbot.JobInfo),
+		stop2user: make(chan string),
+	}
 
 	defer func() {
 		err := pudge.CloseAll()
@@ -388,17 +416,15 @@ func main() {
 		log.Println("db closed")
 	}()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	bt.wg.Add(2)
+	go telegram(bt)
+	go upwork(bt)
 
-	wg.Add(2)
-	go telegram(wg, ctx, up2tel)
-	go upwork(wg, ctx, up2tel)
-
-	quit := make(chan os.Signal)
-	signal.Notify(quit, os.Interrupt, os.Kill)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
 	<-quit
 	log.Println("signal to shutdown ...")
 	cancel()
-	wg.Wait()
+	bt.wg.Wait()
 }

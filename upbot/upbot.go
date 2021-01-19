@@ -29,6 +29,7 @@ const (
 type UserInfo struct {
 	ID             string
 	ChannelID      int64
+	Active         bool
 	WaitingFeedUrl WaitingFeedKind
 	Feeds          map[string]bool
 }
