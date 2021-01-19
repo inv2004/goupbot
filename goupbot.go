@@ -21,32 +21,6 @@ import (
 	// "github.com/upwork/golang-upwork/api/routers/jobs/search"
 )
 
-// func fetch() {
-// 	bow := surf.NewBrowser()
-// 	bow.SetUserAgent(agent.Chrome())
-// 	err := bow.Open("https://www.upwork.com/search/jobs/?q=golang&sort=recency")
-
-// 	if err != nil {
-// 		log.Panic(err)
-// 	}
-
-// 	title := bow.Title()
-// 	log.Println("Title: ", title)
-// 	if !strings.HasSuffix(title, "Upwork") {
-// 		log.Panic("title is wrong")
-// 	}
-
-// 	body := bow.Body()
-// 	ioutil.WriteFile("1.html", []byte(body), 0644)
-
-// 	scanner := bufio.NewScanner(strings.NewReader(body))
-// 	scanner.Split(bufio.ScanLines)
-
-// 	for scanner.Scan() {
-// 		parseJobLine(scanner.Text())
-// 	}
-// }
-
 func fetchRss(ctx context.Context, userInfo upbot.UserInfo, url string, up2tel chan upbot.JobInfo, dryRun bool) error {
 	log.Println("fetching for", userInfo.ID, "url:", url)
 
@@ -165,7 +139,7 @@ func processMessage(wg *sync.WaitGroup, ctx context.Context, msg *tgbotapi.Messa
 /start      - start publishing
 /stop       - stop
 /ping       - pong
-/list       - list all feeds
+/list       - list all your feeds
 /add        - add feed
 /del				- del feed
 `
@@ -312,6 +286,39 @@ func appendMsgToLog(text string, errText string) {
 	}
 }
 
+func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo int) (err error) {
+	text = strings.ReplaceAll(text, "<br />", "\n")
+	text = strings.ReplaceAll(text, "<br/>", "\n")
+	text = strings.ReplaceAll(text, "<br>", "\n")
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+
+	if len(text) > 4096 {
+		text = text[:4092] + " ..."
+	}
+
+	msg := tgbotapi.NewMessage(channel, text)
+	msg.ParseMode = tgbotapi.ModeHTML
+	msg.DisableWebPagePreview = true
+
+	if replyTo > 0 {
+		msg.ReplyToMessageID = replyTo
+	}
+
+	_, err = bot.Send(msg)
+	return
+}
+
+func SendMsgToUser(bot *tgbotapi.BotAPI, user string, text string) error {
+	userInfo := upbot.UserInfo{}
+	err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+	if err != nil {
+		return err
+	}
+
+	err = SendMsgToChannel(bot, userInfo.ChannelID, text, 0)
+	return err
+}
+
 func telegram(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo) {
 	defer wg.Done()
 	defer log.Println("Telegram is down")
@@ -344,40 +351,18 @@ func telegram(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo
 
 			reply := processMessage(wg, ctx, update.Message, up2tel)
 
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, reply)
-			msg.ReplyToMessageID = update.Message.MessageID
-
-			_, err := bot.Send(msg)
+			err := SendMsgToChannel(bot, update.Message.Chat.ID, reply, update.Message.MessageID)
 			if err != nil {
 				log.Panic(err)
 			}
 		case up := <-up2tel:
 			log.Println("recv:", up.Key)
 
-			text := up.RSS.Content
-
-			text = strings.ReplaceAll(text, "<br />", "\n")
-			text = strings.ReplaceAll(text, "<br/>", "\n")
-			text = strings.ReplaceAll(text, "<br>", "\n")
-			text = strings.ReplaceAll(text, "&nbsp;", " ")
-
-			userInfo := upbot.UserInfo{}
-			res := pudge.Get(upbot.DBPathUsers, up.Key.User, &userInfo)
-			if res != nil {
-				log.Panic(res)
-			}
-
-			if len(text) > 4096 {
-				text = text[:4092] + " ..."
-			}
-			msg := tgbotapi.NewMessage(userInfo.ChannelID, text)
-			msg.ParseMode = tgbotapi.ModeHTML
-			msg.DisableWebPagePreview = true
-			_, err := bot.Send(msg)
+			err := SendMsgToUser(bot, up.Key.User, up.RSS.Content)
 			if err != nil {
-				appendMsgToLog(text, err.Error())
 				log.Panic(err)
 			}
+
 			log.Println("saving:", up.Key.Key())
 			pubVal := upbot.JobValue{Published: *up.RSS.PublishedParsed, Processed: time.Now()}
 			ret := pudge.Set(upbot.DBPathJobs, up.Key.Key(), pubVal)
