@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"time"
@@ -46,10 +47,10 @@ import (
 // 	}
 // }
 
-func fetchRss(userInfo upbot.UserInfo, url string, up2tel chan upbot.JobInfo, dryRun bool) error {
+func fetchRss(ctx context.Context, userInfo upbot.UserInfo, url string, up2tel chan upbot.JobInfo, dryRun bool) error {
 	log.Println("fetching for", userInfo.ID, "url:", url)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	fp := gofeed.NewParser()
@@ -75,57 +76,64 @@ func fetchRss(userInfo upbot.UserInfo, url string, up2tel chan upbot.JobInfo, dr
 				job := upbot.JobInfo{}
 				job.Key = key
 				job.RSS = *item
-				up2tel <- job
 				log.Println("sending job:", key)
+				up2tel <- job
 			} else {
-				err := pudge.Set(upbot.DBPathJobs, key.Key(), time.Time{})
+				pubVal := upbot.JobValue{Published: *item.PublishedParsed, Processed: time.Time{}}
+				err := pudge.Set(upbot.DBPathJobs, key.Key(), pubVal)
 				if err != nil {
 					log.Panic(err)
 				}
 			}
 		}
-
 	}
 
 	if dryRun {
-		log.Println("drained:", newCounter)
-	} else if newCounter == 0 {
+		log.Println("Drained:", newCounter)
+	} else {
 		log.Println("New Counter:", newCounter)
 	}
 
 	return nil
 }
 
-func fetchUser(user string, up2tel chan upbot.JobInfo) {
+func fetchUser(wg *sync.WaitGroup, ctx context.Context, user string, up2tel chan upbot.JobInfo) {
+	defer log.Println("fetchUser[", user, "] is going down")
+	defer wg.Done()
 	for {
-		userInfo := upbot.UserInfo{}
-		err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
-		if err != nil {
-			log.Panic(err)
-		}
-
-		hasActiveFeeds := false
-
-		for url, active := range userInfo.Feeds {
-			if !active {
-				continue
-			}
-			hasActiveFeeds = true
-			err := fetchRss(userInfo, url, up2tel, false)
+		select {
+		case <-time.After(upbot.GetDelay()):
+			userInfo := upbot.UserInfo{}
+			err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
 			if err != nil {
 				log.Panic(err)
 			}
-			time.Sleep(upbot.GetDelay())
-		}
 
-		if !hasActiveFeeds {
-			log.Print("WARN: no active feeds found for user ", userInfo.ID)
+			hasActiveFeeds := false
+
+			for url, active := range userInfo.Feeds {
+				if !active {
+					continue
+				}
+				hasActiveFeeds = true
+				err := fetchRss(ctx, userInfo, url, up2tel, false)
+				if err != nil {
+					log.Panic(err)
+				}
+				time.Sleep(upbot.GetDelay())
+			}
+
+			if !hasActiveFeeds {
+				log.Print("WARN: no active feeds found for user ", userInfo.ID)
+				return
+			}
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func upwork(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
+func upwork(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo) {
 	defer wg.Done()
 
 	keys, err := pudge.Keys(upbot.DBPathUsers, nil, 0, 0, true)
@@ -134,11 +142,12 @@ func upwork(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
 	}
 
 	for _, user := range keys {
-		go fetchUser(string(user), up2tel)
+		wg.Add(1)
+		go fetchUser(wg, ctx, string(user), up2tel)
 	}
 }
 
-func processMessage(msg *tgbotapi.Message, up2tel chan upbot.JobInfo) (reply string) {
+func processMessage(wg *sync.WaitGroup, ctx context.Context, msg *tgbotapi.Message, up2tel chan upbot.JobInfo) (reply string) {
 	user := msg.From.UserName
 	text := msg.Text
 	// words := strings.Fields(text)
@@ -239,16 +248,12 @@ func processMessage(msg *tgbotapi.Message, up2tel chan upbot.JobInfo) (reply str
 		switch userInfo.WaitingFeedUrl {
 		case upbot.WaitingAdd:
 			url := text
-			err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
-			if err != nil {
-				log.Panic(err)
-			}
 			userInfo.WaitingFeedUrl = upbot.WaitingNone
 			err = pudge.Set(upbot.DBPathUsers, user, userInfo)
 			if err != nil {
 				log.Panic(err)
 			}
-			err = fetchRss(userInfo, url, up2tel, true)
+			err = fetchRss(ctx, userInfo, url, up2tel, true)
 			if err != nil {
 				reply = err.Error()
 				return
@@ -259,18 +264,16 @@ func processMessage(msg *tgbotapi.Message, up2tel chan upbot.JobInfo) (reply str
 				log.Panic(err)
 			}
 
-			go func() {
-				time.Sleep(upbot.GetDelay())
-				fetchUser(userInfo.ID, up2tel)
-			}()
+			if len(userInfo.Feeds) > 0 {
+				go func() {
+					wg.Add(1)
+					fetchUser(wg, ctx, userInfo.ID, up2tel)
+				}()
+			}
 
 			reply = "Added succesfully. Default pull interval is 1 minute"
 		case upbot.WaitingDel:
 			url := text
-			err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
-			if err != nil {
-				log.Panic(err)
-			}
 			userInfo.WaitingFeedUrl = upbot.WaitingNone
 			_, ok := userInfo.Feeds[url]
 			if ok {
@@ -310,8 +313,9 @@ func appendMsgToLog(text string, errText string) {
 	}
 }
 
-func telegram(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
+func telegram(wg *sync.WaitGroup, ctx context.Context, up2tel chan upbot.JobInfo) {
 	defer wg.Done()
+	defer log.Println("Telegram is going down")
 
 	bot, err := tgbotapi.NewBotAPI(upbot.GetConfig().Telegram.Token)
 	if err != nil {
@@ -339,7 +343,7 @@ func telegram(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
 
 			log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
 
-			reply := processMessage(update.Message, up2tel)
+			reply := processMessage(wg, ctx, update.Message, up2tel)
 
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, reply)
 			msg.ReplyToMessageID = update.Message.MessageID
@@ -349,16 +353,12 @@ func telegram(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
 				log.Panic(err)
 			}
 		case up := <-up2tel:
-			log.Println("recv:", up.RSS.GUID)
+			log.Println("recv:", up.Key)
 
 			text := up.RSS.Content
 
-			// text, err = html2md(text)
-			// if err != nil {
-			// 	log.Panic(err)
-			// }
-
 			text = strings.ReplaceAll(text, "<br />", "\n")
+			text = strings.ReplaceAll(text, "<br/>", "\n")
 			text = strings.ReplaceAll(text, "<br>", "\n")
 			text = strings.ReplaceAll(text, "&nbsp;", " ")
 
@@ -376,33 +376,42 @@ func telegram(wg *sync.WaitGroup, up2tel chan upbot.JobInfo) {
 				appendMsgToLog(text, err.Error())
 				log.Panic(err)
 			}
-			ret := pudge.Set(upbot.DBPathJobs, up.Key.Key(), time.Now())
+			log.Println("saving:", up.Key.Key())
+			pubVal := upbot.JobValue{Published: *up.RSS.PublishedParsed, Processed: time.Now()}
+			ret := pudge.Set(upbot.DBPathJobs, up.Key.Key(), pubVal)
 			if ret != nil {
 				log.Panic(err)
 			}
+		case <-ctx.Done():
+			return
 		}
 	}
 }
 
 func main() {
-	var wg sync.WaitGroup
+	wg := &sync.WaitGroup{}
 
 	up2tel := make(chan upbot.JobInfo)
 
-	defer pudge.CloseAll()
+	defer func() {
+		err := pudge.CloseAll()
+		if err != nil {
+			log.Panic(err)
+		}
+		log.Println("db closed")
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	wg.Add(2)
-	go telegram(&wg, up2tel)
-	go upwork(&wg, up2tel)
+	go telegram(wg, ctx, up2tel)
+	go upwork(wg, ctx, up2tel)
 
-	// quit := make(chan os.Signal)
-	// signal.Notify(quit, os.Interrupt, os.Kill)
+	quit := make(chan os.Signal)
+	signal.Notify(quit, os.Interrupt, os.Kill)
 
+	<-quit
+	log.Println("signal to shutdown ...")
+	cancel()
 	wg.Wait()
-
-	// <-quit
-	// log.Println("Shutdown Server ...")
-	// if err := pudge.CloseAll(); err != nil {
-	// 	log.Println("Pudge Shutdown err:", err)
-	// }
 }

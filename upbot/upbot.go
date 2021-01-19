@@ -38,6 +38,11 @@ type JobInfoKey struct {
 	GUID string
 }
 
+type JobValue struct {
+	Published time.Time
+	Processed time.Time
+}
+
 type JobInfo struct {
 	Key JobInfoKey
 	RSS gofeed.Item
@@ -62,8 +67,8 @@ func GetDelay() time.Duration {
 	return config.Feed.Delay * time.Second
 }
 
-func (k JobInfoKey) Key() []byte {
-	return []byte(k.User + ";" + k.GUID)
+func (k JobInfoKey) Key() string {
+	return (k.User + ";" + k.GUID)
 }
 
 func init() {

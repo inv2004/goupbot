@@ -3,10 +3,18 @@ package main
 import (
 	"fmt"
 	"log"
+	"sort"
+	"time"
 
 	upbot "./upbot"
 	"github.com/recoilme/pudge"
 )
+
+type JobDesc struct {
+	Processed time.Time
+	Published time.Time
+	GUID      string
+}
 
 func dumpUsers() {
 	fmt.Printf("%s:\n", upbot.DBPathUsers)
@@ -36,15 +44,26 @@ func dumpJobs() {
 		log.Panic(err)
 	}
 
+	data := make([]JobDesc, len(keys))
+
 	for _, k := range keys {
-		v := upbot.UserInfo{}
+		v := upbot.JobValue{}
 		err := pudge.Get(upbot.DBPathJobs, k, &v)
 		if err != nil {
 			log.Panic(err)
 		}
 
-		fmt.Printf("  %s %v\n", k, v)
+		data = append(data, JobDesc{v.Processed, v.Published, string(k)})
 	}
+
+	sort.Slice(data, func(i, j int) bool {
+		return data[i].Processed.Before(data[j].Processed)
+	})
+
+	for _, v := range data {
+		fmt.Printf("  %s:%s %s\n", v.Processed, v.Published, v.GUID)
+	}
+
 }
 
 func main() {
