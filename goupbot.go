@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/mmcdole/gofeed"
 	"github.com/recoilme/pudge"
+	log "github.com/sirupsen/logrus"
 	// "github.com/upwork/golang-upwork/api"
 	// "github.com/upwork/golang-upwork/api/routers/jobs"
 	// "github.com/upwork/golang-upwork/api/routers/jobs/search"
@@ -28,7 +28,7 @@ type BotStruct struct {
 	stop2user chan string
 }
 
-func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt BotStruct) error {
+func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt *BotStruct) error {
 	log.Println("fetching for", userInfo.ID, "url:", url)
 
 	ctx, cancel := context.WithTimeout(bt.ctx, 10*time.Second)
@@ -78,9 +78,29 @@ func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt BotStruct) er
 	return nil
 }
 
-func fetchUser(user string, bt BotStruct) {
+func NActiveFeeds(userInfo *upbot.UserInfo) (result int) {
+	for _, v := range userInfo.Feeds {
+		if v {
+			result += 1
+		}
+	}
+	return
+}
+
+func HasActiveFeeds(userInfo *upbot.UserInfo) bool {
+	for _, v := range userInfo.Feeds {
+		if v {
+			return true
+		}
+	}
+	return false
+}
+
+func fetchUser(user string, bt *BotStruct) {
 	defer bt.wg.Done()
-	defer log.Println("fetchUser[", user, "] is going down")
+	defer log.WithField("user", user).Info("fetchUser is going down")
+
+	log.WithField("user", user).Info("fetchUser is started")
 
 	for {
 		select {
@@ -92,37 +112,38 @@ func fetchUser(user string, bt BotStruct) {
 			}
 
 			if !userInfo.Active {
-				log.Print("WARN: user is not active ", userInfo.ID)
+				log.Warn("WARN: user is not active ", userInfo.ID)
 				return
 			}
 
-			hasActiveFeeds := false
+			if !HasActiveFeeds(&userInfo) {
+				log.Warn("WARN: no active feeds found for user ", userInfo.ID)
+				return
+			}
+
 			for url, active := range userInfo.Feeds {
 				if !active {
 					continue
 				}
-				hasActiveFeeds = true
 				err := fetchRss(userInfo, url, false, bt)
 				if err != nil {
 					log.Panic(err)
 				}
 			}
 
-			if !hasActiveFeeds {
-				log.Print("WARN: no active feeds found for user ", userInfo.ID)
-				return
-			}
 		case <-bt.ctx.Done():
+			log.WithField("user", user).Debug("stop fetch")
 			return
 		case userToCancel := <-bt.stop2user:
 			if user == userToCancel {
+				log.WithField("user", user).Debug("cancel fetch")
 				return
 			}
 		}
 	}
 }
 
-func upwork(bt BotStruct) {
+func upwork(bt *BotStruct) {
 	defer bt.wg.Done()
 
 	keys, err := pudge.Keys(upbot.DBPathUsers, nil, 0, 0, true)
@@ -136,7 +157,7 @@ func upwork(bt BotStruct) {
 	}
 }
 
-func processMessage(msg *tgbotapi.Message, bt BotStruct) (reply string) {
+func processMessage(msg *tgbotapi.Message, bt *BotStruct) (reply string) {
 	user := msg.From.UserName
 	text := msg.Text
 	// words := strings.Fields(text)
@@ -161,31 +182,55 @@ func processMessage(msg *tgbotapi.Message, bt BotStruct) (reply string) {
 `
 	case "/start":
 		userInfo := upbot.UserInfo{}
-		userInfo.ID = msg.From.UserName
-		userInfo.ChannelID = msg.Chat.ID
+		err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+		if err != nil {
+			if errors.Is(err, pudge.ErrKeyNotFound) {
+				userInfo.ID = user
+				userInfo.ChannelID = msg.Chat.ID
+				userInfo.Feeds = make(map[string]bool)
+			}
+		}
+
+		if userInfo.Active {
+			reply = "Your user is active already"
+			return
+		}
+
 		userInfo.Active = true
-		userInfo.Feeds = make(map[string]bool)
-		err := pudge.Set(upbot.DBPathUsers, user, userInfo)
+		err = pudge.Set(upbot.DBPathUsers, user, userInfo)
 		if err != nil {
 			log.Panic(err)
 		}
-		reply = "Thank you for subscribing the bot.\n\nPlease add feed channels by /add command or /help for help"
+		feedInfo := ""
+		if HasActiveFeeds(&userInfo) {
+			feedInfo = "You have some channels already, check with /list\n\n"
+			bt.wg.Add(1)
+			go fetchUser(userInfo.ID, bt)
+		}
+
+		reply = "Thank you for subscribing the bot.\n\n" + feedInfo + "Please add feed channels by /add command or /help for help"
 	case "/stop":
 		userInfo := upbot.UserInfo{}
-		err := pudge.Get(upbot.DBPathUsers, msg.From.UserName, userInfo)
+		err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				reply = "nothing to stop"
 				return
 			}
+			log.Panic(err)
+		}
+		if !userInfo.Active {
+			reply = "stopped already"
+			return
 		}
 		userInfo.Active = false
-		err = pudge.Set(upbot.DBPathUsers, user, userInfo)
+		log.WithField("user", user).WithField("userInfo", userInfo).Debug("Store")
+		err = pudge.Set(upbot.DBPathUsers, user, &userInfo)
 		if err != nil {
 			log.Panic(err)
 		}
 		bt.stop2user <- msg.From.UserName
-		reply = "Your feed stopped, Type /start to continue"
+		reply = "Your user and feeds are suspended, Type /start to resume"
 	case "/ping":
 		reply = "pong"
 	case "/add":
@@ -198,6 +243,10 @@ func processMessage(msg *tgbotapi.Message, bt BotStruct) (reply string) {
 			} else {
 				log.Panic(err)
 			}
+		}
+		if userInfo.Active == false {
+			reply = "Type /start to resume"
+			return
 		}
 		userInfo.WaitingFeedUrl = upbot.WaitingAdd
 		err = pudge.Set(upbot.DBPathUsers, user, userInfo)
@@ -253,41 +302,21 @@ func processMessage(msg *tgbotapi.Message, bt BotStruct) (reply string) {
 		}
 		switch userInfo.WaitingFeedUrl {
 		case upbot.WaitingAdd:
-			url := text
-			userInfo.WaitingFeedUrl = upbot.WaitingNone
-			err = pudge.Set(upbot.DBPathUsers, user, userInfo)
-			if err != nil {
-				log.Panic(err)
-			}
-			err = fetchRss(userInfo, url, true, bt)
+			err = bt.AddChannel(user, text)
 			if err != nil {
 				reply = err.Error()
 				return
 			}
-			userInfo.Feeds[url] = true
-			err = pudge.Set(upbot.DBPathUsers, user, userInfo)
-			if err != nil {
-				log.Panic(err)
-			}
-
-			if len(userInfo.Feeds) == 1 {
-				bt.wg.Add(1)
-				go fetchUser(userInfo.ID, bt)
-			}
 
 			reply = "Added succesfully. Default pull interval is 1 minute"
 		case upbot.WaitingDel:
-			url := text
-			userInfo.WaitingFeedUrl = upbot.WaitingNone
-			_, ok := userInfo.Feeds[url]
-			if ok {
-				userInfo.Feeds[url] = false
-			}
-			err = pudge.Set(upbot.DBPathUsers, user, userInfo)
+			err = bt.DelChannel(user, text)
 			if err != nil {
-				log.Panic(err)
+				reply = err.Error()
+				return
 			}
-			reply = "Rss removed"
+
+			reply = "feed removed"
 		default:
 			reply = "Unknown command"
 		}
@@ -342,7 +371,7 @@ func SendMsgToUser(bot *tgbotapi.BotAPI, user string, text string) error {
 	return err
 }
 
-func telegram(bt BotStruct) {
+func telegram(bt *BotStruct) {
 	defer bt.wg.Done()
 	defer log.Println("Telegram is down")
 
@@ -379,29 +408,89 @@ func telegram(bt BotStruct) {
 				log.Panic(err)
 			}
 		case up := <-bt.up2tel:
-			log.Println("recv:", up.Key)
+			log.WithField("key", up.Key.Key()).Info("recv")
 
 			err := SendMsgToUser(bot, up.Key.User, up.RSS.Content)
 			if err != nil {
 				log.Panic(err)
 			}
 
-			log.Println("saving:", up.Key.Key())
+			log.WithField("key", up.Key.Key()).Info("saving")
 			pubVal := upbot.JobValue{Published: *up.RSS.PublishedParsed, Processed: time.Now()}
 			ret := pudge.Set(upbot.DBPathJobs, up.Key.Key(), pubVal)
 			if ret != nil {
 				log.Panic(err)
 			}
 		case <-bt.ctx.Done():
+			log.Debug("telegram: done")
 			return
 		}
 	}
 }
 
+func Save(user string, userInfo upbot.UserInfo) {
+	err := pudge.Set(upbot.DBPathUsers, user, userInfo)
+	if err != nil {
+		log.Panic(err)
+	}
+}
+
+func (bt *BotStruct) AddChannel(user string, url string) error {
+	userInfo := upbot.UserInfo{}
+	err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+	if err != nil {
+		log.Panic(err)
+	}
+	err = fetchRss(userInfo, url, true, bt)
+	userInfo.WaitingFeedUrl = upbot.WaitingNone
+	if err == nil {
+		userInfo.Feeds[url] = true
+	}
+	Save(user, userInfo)
+	if err != nil {
+		return err
+	}
+
+	if NActiveFeeds(&userInfo) == 1 {
+		bt.wg.Add(1)
+		go fetchUser(userInfo.ID, bt)
+	}
+
+	return nil
+}
+
+func (bt *BotStruct) DelChannel(user string, url string) error {
+	userInfo := upbot.UserInfo{}
+	err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+	if err != nil {
+		log.Panic(err)
+	}
+	err = fetchRss(userInfo, url, true, bt)
+	userInfo.WaitingFeedUrl = upbot.WaitingNone
+	if err == nil {
+		userInfo.Feeds[url] = false
+	}
+	Save(user, userInfo)
+	if err != nil {
+		if !errors.Is(err, pudge.ErrKeyNotFound) {
+			return err
+		}
+	}
+
+	if NActiveFeeds(&userInfo) == 1 {
+		bt.wg.Add(1)
+		go fetchUser(userInfo.ID, bt)
+	}
+
+	return nil
+}
+
 func main() {
+	log.SetLevel(log.DebugLevel)
+
 	ctx, cancel := context.WithCancel(context.Background())
 
-	bt := BotStruct{
+	bt := &BotStruct{
 		wg:        &sync.WaitGroup{},
 		ctx:       ctx,
 		up2tel:    make(chan upbot.JobInfo),
@@ -413,7 +502,7 @@ func main() {
 		if err != nil {
 			log.Panic(err)
 		}
-		log.Println("db closed")
+		log.Info("db closed")
 	}()
 
 	bt.wg.Add(2)
@@ -424,7 +513,7 @@ func main() {
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
 	<-quit
-	log.Println("signal to shutdown ...")
+	log.Warn("signal to shutdown ...")
 	cancel()
 	bt.wg.Wait()
 }
