@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/mmcdole/gofeed"
 	"github.com/recoilme/pudge"
+	log "github.com/sirupsen/logrus"
 	// "github.com/upwork/golang-upwork/api"
 	// "github.com/upwork/golang-upwork/api/routers/jobs"
 	// "github.com/upwork/golang-upwork/api/routers/jobs/search"
@@ -29,7 +29,7 @@ type BotStruct struct {
 }
 
 func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt BotStruct) error {
-	log.Println("fetching for", userInfo.ID, "url:", url)
+	log.WithField("user", userInfo.ID).Info("fetching for")
 
 	ctx, cancel := context.WithTimeout(bt.ctx, 10*time.Second)
 	defer cancel()
@@ -39,8 +39,8 @@ func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt BotStruct) er
 	if err != nil {
 		return err
 	}
-	log.Println("Published:", feed.Published)
-	log.Println("Title:", feed.Title)
+	log.WithField("user", userInfo.ID).Debug("Published: ", feed.Published)
+	log.WithField("user", userInfo.ID).Debug("Title: ", feed.Published)
 
 	newCounter := 0
 
@@ -57,7 +57,7 @@ func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt BotStruct) er
 				job := upbot.JobInfo{}
 				job.Key = key
 				job.RSS = *item
-				log.Println("sending job:", key)
+				log.WithField("key", key).Debug("sending job")
 				bt.up2tel <- job
 			} else {
 				pubVal := upbot.JobValue{Published: *item.PublishedParsed, Processed: time.Time{}}
@@ -70,9 +70,9 @@ func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt BotStruct) er
 	}
 
 	if dryRun {
-		log.Println("Drained:", newCounter)
+		log.WithField("counter", newCounter).Info("Drained")
 	} else {
-		log.Println("New Counter:", newCounter)
+		log.WithField("counter", newCounter).Info("New")
 	}
 
 	return nil
@@ -92,7 +92,7 @@ func fetchUser(user string, bt BotStruct) {
 			}
 
 			if !userInfo.Active {
-				log.Print("WARN: user is not active ", userInfo.ID)
+				log.WithField("user", userInfo.ID).Warn("user is not active")
 				return
 			}
 
@@ -109,13 +109,14 @@ func fetchUser(user string, bt BotStruct) {
 			}
 
 			if !hasActiveFeeds {
-				log.Print("WARN: no active feeds found for user ", userInfo.ID)
+				log.WithField("user", userInfo.ID).Warn("no active feeds found for user")
 				return
 			}
 		case <-bt.ctx.Done():
 			return
 		case userToCancel := <-bt.stop2user:
 			if user == userToCancel {
+				log.WithField("user", user).Warn("received cancel")
 				return
 			}
 		}
@@ -178,6 +179,10 @@ func processMessage(msg *tgbotapi.Message, bt BotStruct) (reply string) {
 				reply = "nothing to stop"
 				return
 			}
+		}
+		if len(userInfo.Feeds) == 0 {
+			reply = "no feeds to stop"
+			return
 		}
 		userInfo.Active = false
 		err = pudge.Set(upbot.DBPathUsers, user, userInfo)
@@ -344,7 +349,7 @@ func SendMsgToUser(bot *tgbotapi.BotAPI, user string, text string) error {
 
 func telegram(bt BotStruct) {
 	defer bt.wg.Done()
-	defer log.Println("Telegram is down")
+	defer log.Warn("Telegram is down")
 
 	bot, err := tgbotapi.NewBotAPI(upbot.GetConfig().Telegram.Token)
 	if err != nil {
@@ -353,7 +358,7 @@ func telegram(bt BotStruct) {
 
 	bot.Debug = false
 
-	log.Printf("Authorized on account %s", bot.Self.UserName)
+	log.WithField("bot", bot.Self.UserName).Info("Authorized on account")
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -379,14 +384,14 @@ func telegram(bt BotStruct) {
 				log.Panic(err)
 			}
 		case up := <-bt.up2tel:
-			log.Println("recv:", up.Key)
+			log.WithField("key", up.Key).Debug("recv")
 
 			err := SendMsgToUser(bot, up.Key.User, up.RSS.Content)
 			if err != nil {
 				log.Panic(err)
 			}
 
-			log.Println("saving:", up.Key.Key())
+			log.WithField("key", up.Key).Debug("saving")
 			pubVal := upbot.JobValue{Published: *up.RSS.PublishedParsed, Processed: time.Now()}
 			ret := pudge.Set(upbot.DBPathJobs, up.Key.Key(), pubVal)
 			if ret != nil {
@@ -399,6 +404,10 @@ func telegram(bt BotStruct) {
 }
 
 func main() {
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+	})
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	bt := BotStruct{
@@ -413,7 +422,7 @@ func main() {
 		if err != nil {
 			log.Panic(err)
 		}
-		log.Println("db closed")
+		log.Info("db closed")
 	}()
 
 	bt.wg.Add(2)
@@ -424,7 +433,7 @@ func main() {
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
 	<-quit
-	log.Println("signal to shutdown ...")
+	log.Warn("signal to shutdown ...")
 	cancel()
 	bt.wg.Wait()
 }
