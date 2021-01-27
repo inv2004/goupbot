@@ -25,6 +25,7 @@ type botStruct struct {
 	wg        *sync.WaitGroup
 	ctx       context.Context
 	up2tel    chan upbot.JobInfo
+	admin			chan string
 	stop2user chan string
 }
 
@@ -123,6 +124,7 @@ func fetchUser(user string, bt *botStruct) {
 				err := fetchRss(userInfo, url, false, bt)
 				if err != nil {
 					log.Error(err)
+					bt.admin <- err.Error()
 				}
 			}
 
@@ -424,8 +426,17 @@ func telegram(bt *botStruct) {
 			if ret != nil {
 				log.Panic(err)
 			}
+		case msg := <-bt.admin:
+			err := SendMsgToUser(bot, upbot.GetAdmin(), "<b>Admin Message</b>\n" + msg)
+			if err != nil {
+				log.Panic(err)
+			}
 		case <-bt.ctx.Done():
 			log.Debug("telegram: done")
+			err := SendMsgToUser(bot, upbot.GetAdmin(), "bot is going down")
+			if err != nil {
+				log.Panic(err)
+			}
 			return
 		}
 	}
@@ -499,6 +510,7 @@ func main() {
 		wg:        &sync.WaitGroup{},
 		ctx:       ctx,
 		up2tel:    make(chan upbot.JobInfo),
+		admin:		 make(chan string),
 		stop2user: make(chan string),
 	}
 

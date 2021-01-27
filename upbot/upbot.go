@@ -52,6 +52,7 @@ type JobInfo struct {
 type Config struct {
 	Telegram struct {
 		Token string
+		Admin string
 	}
 	Feed struct {
 		Delay time.Duration
@@ -66,6 +67,10 @@ func GetConfig() Config {
 
 func GetDelay() time.Duration {
 	return config.Feed.Delay * time.Second
+}
+
+func GetAdmin() string {
+	return config.Telegram.Admin
 }
 
 func (k JobInfoKey) Key() string {
