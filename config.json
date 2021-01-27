@@ -1,6 +1,7 @@
 {
   "telegram": {
-    "token": "YourBotToken"
+    "token": "YourBotToken",
+    "admin": "AdminUser"
   },
   "feed": {
     "delay": 60
