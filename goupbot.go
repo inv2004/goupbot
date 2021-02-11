@@ -422,8 +422,8 @@ func telegram(bt *botStruct) {
 
 			log.WithField("key", up.Key).Debug("saving")
 			pubVal := upbot.JobValue{Published: *up.RSS.PublishedParsed, Processed: time.Now()}
-			ret := pudge.Set(upbot.DBPathJobs, up.Key.Key(), pubVal)
-			if ret != nil {
+			err := pudge.Set(upbot.DBPathJobs, up.Key.Key(), pubVal)
+			if err != nil {
 				log.Panic(err)
 			}
 		case msg := <-bt.admin:
