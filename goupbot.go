@@ -347,7 +347,11 @@ func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo 
 	text = strings.ReplaceAll(text, "&nbsp;", " ")
 
 	if len(text) > 4096 {
-		text = text[:4092] + " ..."
+		text = text[:4092]
+		idx := strings.LastIndex(text, "\n")
+		if idx > 0 {
+			text = text[:idx-1] + " ..."
+		}
 	}
 
 	msg := tgbotapi.NewMessage(channel, text)
