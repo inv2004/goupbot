@@ -32,7 +32,7 @@ func dumpUsers() {
 			log.Panic(err)
 		}
 
-		fmt.Printf("  %s %v\n", k, v)
+		fmt.Printf("  \"%s\" %v\n", k, v)
 	}
 }
 

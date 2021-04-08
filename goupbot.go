@@ -483,11 +483,8 @@ func (bt *botStruct) DelChannel(user string, url string) error {
 	if err != nil {
 		log.Panic(err)
 	}
-	err = fetchRss(userInfo, url, true, bt)
 	userInfo.WaitingFeedUrl = upbot.WaitingNone
-	if err == nil {
-		userInfo.Feeds[url] = false
-	}
+	userInfo.Feeds[url] = false
 	Save(user, userInfo)
 	if err != nil {
 		if !errors.Is(err, pudge.ErrKeyNotFound) {
