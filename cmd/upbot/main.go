@@ -12,7 +12,8 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
-	upbot "github.com/inv2004/goupbot/internal/upbot"
+	"github.com/inv2004/goupbot/internal/upbot/config"
+	"github.com/inv2004/goupbot/internal/upbot/model"
 	"github.com/mmcdole/gofeed"
 	"github.com/recoilme/pudge"
 	log "github.com/sirupsen/logrus"
@@ -24,12 +25,12 @@ import (
 type botStruct struct {
 	wg        *sync.WaitGroup
 	ctx       context.Context
-	up2tel    chan upbot.JobInfo
+	up2tel    chan model.JobInfo
 	admin     chan string
 	stop2user chan string
 }
 
-func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt *botStruct) error {
+func fetchRss(userInfo model.UserInfo, url string, dryRun bool, bt *botStruct) error {
 	log.WithField("user", userInfo.ID).Info("fetching for")
 
 	ctx, cancel := context.WithTimeout(bt.ctx, 10*time.Second)
@@ -46,23 +47,23 @@ func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt *botStruct) e
 	newCounter := 0
 
 	for _, item := range feed.Items {
-		key := upbot.JobInfoKey{User: userInfo.ID, GUID: item.GUID}
+		key := model.JobInfoKey{User: userInfo.ID, GUID: item.GUID}
 
-		hasKey, err := pudge.Has(upbot.DBPathJobs, key.Key())
+		hasKey, err := pudge.Has(model.DBPathJobs, key.Key())
 		if err != nil {
 			log.Panic(err)
 		}
 		if !hasKey {
 			newCounter += 1
 			if !dryRun {
-				job := upbot.JobInfo{}
+				job := model.JobInfo{}
 				job.Key = key
 				job.RSS = *item
 				log.WithField("key", key).Debug("sending job")
 				bt.up2tel <- job
 			} else {
-				pubVal := upbot.JobValue{Published: *item.PublishedParsed, Processed: time.Time{}}
-				err := pudge.Set(upbot.DBPathJobs, key.Key(), pubVal)
+				pubVal := model.JobValue{Published: *item.PublishedParsed, Processed: time.Time{}}
+				err := pudge.Set(model.DBPathJobs, key.Key(), pubVal)
 				if err != nil {
 					log.Panic(err)
 				}
@@ -79,7 +80,7 @@ func fetchRss(userInfo upbot.UserInfo, url string, dryRun bool, bt *botStruct) e
 	return nil
 }
 
-func NActiveFeeds(userInfo *upbot.UserInfo) (result int) {
+func NActiveFeeds(userInfo *model.UserInfo) (result int) {
 	for _, v := range userInfo.Feeds {
 		if v {
 			result += 1
@@ -88,7 +89,7 @@ func NActiveFeeds(userInfo *upbot.UserInfo) (result int) {
 	return
 }
 
-func HasActiveFeeds(userInfo *upbot.UserInfo) bool {
+func HasActiveFeeds(userInfo *model.UserInfo) bool {
 	for _, v := range userInfo.Feeds {
 		if v {
 			return true
@@ -105,9 +106,9 @@ func fetchUser(user string, bt *botStruct) {
 
 	for {
 		select {
-		case <-time.After(upbot.GetDelay()):
-			userInfo := upbot.UserInfo{}
-			err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+		case <-time.After(config.GetDelay()):
+			userInfo := model.UserInfo{}
+			err := pudge.Get(model.DBPathUsers, user, &userInfo)
 			if err != nil {
 				log.Panic(err)
 			}
@@ -147,7 +148,7 @@ func fetchUser(user string, bt *botStruct) {
 func upwork(bt *botStruct) {
 	defer bt.wg.Done()
 
-	keys, err := pudge.Keys(upbot.DBPathUsers, nil, 0, 0, true)
+	keys, err := pudge.Keys(model.DBPathUsers, nil, 0, 0, true)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -182,8 +183,8 @@ func processMessage(msg *tgbotapi.Message, bt *botStruct) (reply string) {
 /del				- del feed
 `
 	case "/start":
-		userInfo := upbot.UserInfo{}
-		err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+		userInfo := model.UserInfo{}
+		err := pudge.Get(model.DBPathUsers, user, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				userInfo.ID = user
@@ -198,7 +199,7 @@ func processMessage(msg *tgbotapi.Message, bt *botStruct) (reply string) {
 		}
 
 		userInfo.Active = true
-		err = pudge.Set(upbot.DBPathUsers, user, userInfo)
+		err = pudge.Set(model.DBPathUsers, user, userInfo)
 		if err != nil {
 			log.Panic(err)
 		}
@@ -211,8 +212,8 @@ func processMessage(msg *tgbotapi.Message, bt *botStruct) (reply string) {
 
 		reply = "Thank you for subscribing the bot.\n\n" + feedInfo + "Please add feed channels by /add command or /help for help"
 	case "/stop":
-		userInfo := upbot.UserInfo{}
-		err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+		userInfo := model.UserInfo{}
+		err := pudge.Get(model.DBPathUsers, user, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				reply = "nothing to stop"
@@ -230,7 +231,7 @@ func processMessage(msg *tgbotapi.Message, bt *botStruct) (reply string) {
 		}
 		userInfo.Active = false
 		log.WithField("user", user).WithField("userInfo", userInfo).Debug("Store")
-		err = pudge.Set(upbot.DBPathUsers, user, &userInfo)
+		err = pudge.Set(model.DBPathUsers, user, &userInfo)
 		if err != nil {
 			log.Panic(err)
 		}
@@ -239,8 +240,8 @@ func processMessage(msg *tgbotapi.Message, bt *botStruct) (reply string) {
 	case "/ping":
 		reply = "pong"
 	case "/add":
-		userInfo := upbot.UserInfo{}
-		err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+		userInfo := model.UserInfo{}
+		err := pudge.Get(model.DBPathUsers, user, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				reply = "Type /start first"
@@ -253,15 +254,15 @@ func processMessage(msg *tgbotapi.Message, bt *botStruct) (reply string) {
 			reply = "Type /start to resume"
 			return
 		}
-		userInfo.WaitingFeedUrl = upbot.WaitingAdd
-		err = pudge.Set(upbot.DBPathUsers, user, userInfo)
+		userInfo.WaitingFeedUrl = model.WaitingAdd
+		err = pudge.Set(model.DBPathUsers, user, userInfo)
 		if err != nil {
 			log.Panic(err)
 		}
 		reply = "Paste rss url to add here:"
 	case "/del":
-		userInfo := upbot.UserInfo{}
-		err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+		userInfo := model.UserInfo{}
+		err := pudge.Get(model.DBPathUsers, user, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				reply = "Type /start first"
@@ -270,15 +271,15 @@ func processMessage(msg *tgbotapi.Message, bt *botStruct) (reply string) {
 				log.Panic(err)
 			}
 		}
-		userInfo.WaitingFeedUrl = upbot.WaitingDel
-		err = pudge.Set(upbot.DBPathUsers, user, userInfo)
+		userInfo.WaitingFeedUrl = model.WaitingDel
+		err = pudge.Set(model.DBPathUsers, user, userInfo)
 		if err != nil {
 			log.Panic(err)
 		}
 		reply = "Paste rss url to delete here:"
 	case "/list":
-		userInfo := upbot.UserInfo{}
-		err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+		userInfo := model.UserInfo{}
+		err := pudge.Get(model.DBPathUsers, user, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				reply = "Type /start first"
@@ -300,13 +301,13 @@ func processMessage(msg *tgbotapi.Message, bt *botStruct) (reply string) {
 			reply = "Empty"
 		}
 	default:
-		userInfo := upbot.UserInfo{}
-		err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+		userInfo := model.UserInfo{}
+		err := pudge.Get(model.DBPathUsers, user, &userInfo)
 		if err != nil {
 			log.Panic(err)
 		}
 		switch userInfo.WaitingFeedUrl {
-		case upbot.WaitingAdd:
+		case model.WaitingAdd:
 			err = bt.AddChannel(user, text)
 			if err != nil {
 				reply = err.Error()
@@ -314,7 +315,7 @@ func processMessage(msg *tgbotapi.Message, bt *botStruct) (reply string) {
 			}
 
 			reply = "Added succesfully. Default pull interval is 1 minute"
-		case upbot.WaitingDel:
+		case model.WaitingDel:
 			err = bt.DelChannel(user, text)
 			if err != nil {
 				reply = err.Error()
@@ -370,8 +371,8 @@ func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo 
 }
 
 func SendMsgToUser(bot *tgbotapi.BotAPI, user string, text string) error {
-	userInfo := upbot.UserInfo{}
-	err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+	userInfo := model.UserInfo{}
+	err := pudge.Get(model.DBPathUsers, user, &userInfo)
 	if err != nil {
 		return err
 	}
@@ -384,7 +385,7 @@ func telegram(bt *botStruct) {
 	defer bt.wg.Done()
 	defer log.Warn("Telegram is down")
 
-	bot, err := tgbotapi.NewBotAPI(upbot.GetConfig().Telegram.Token)
+	bot, err := tgbotapi.NewBotAPI(config.GetConfig().Telegram.Token)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -425,19 +426,19 @@ func telegram(bt *botStruct) {
 			}
 
 			log.WithField("key", up.Key).Debug("saving")
-			pubVal := upbot.JobValue{Published: *up.RSS.PublishedParsed, Processed: time.Now()}
-			err = pudge.Set(upbot.DBPathJobs, up.Key.Key(), pubVal)
+			pubVal := model.JobValue{Published: *up.RSS.PublishedParsed, Processed: time.Now()}
+			err = pudge.Set(model.DBPathJobs, up.Key.Key(), pubVal)
 			if err != nil {
 				log.Panic(err)
 			}
 		case msg := <-bt.admin:
-			err := SendMsgToUser(bot, upbot.GetAdmin(), "<b>Admin Message</b>\n"+msg)
+			err := SendMsgToUser(bot, config.GetAdmin(), "<b>Admin Message</b>\n"+msg)
 			if err != nil {
 				log.Panic(err)
 			}
 		case <-bt.ctx.Done():
 			log.Debug("telegram: done")
-			err := SendMsgToUser(bot, upbot.GetAdmin(), "bot is going down")
+			err := SendMsgToUser(bot, config.GetAdmin(), "bot is going down")
 			if err != nil {
 				log.Panic(err)
 			}
@@ -446,21 +447,21 @@ func telegram(bt *botStruct) {
 	}
 }
 
-func Save(user string, userInfo upbot.UserInfo) {
-	err := pudge.Set(upbot.DBPathUsers, user, userInfo)
+func Save(user string, userInfo model.UserInfo) {
+	err := pudge.Set(model.DBPathUsers, user, userInfo)
 	if err != nil {
 		log.Panic(err)
 	}
 }
 
 func (bt *botStruct) AddChannel(user string, url string) error {
-	userInfo := upbot.UserInfo{}
-	err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+	userInfo := model.UserInfo{}
+	err := pudge.Get(model.DBPathUsers, user, &userInfo)
 	if err != nil {
 		log.Panic(err)
 	}
 	err = fetchRss(userInfo, url, true, bt)
-	userInfo.WaitingFeedUrl = upbot.WaitingNone
+	userInfo.WaitingFeedUrl = model.WaitingNone
 	if err == nil {
 		userInfo.Feeds[url] = true
 	}
@@ -478,12 +479,12 @@ func (bt *botStruct) AddChannel(user string, url string) error {
 }
 
 func (bt *botStruct) DelChannel(user string, url string) error {
-	userInfo := upbot.UserInfo{}
-	err := pudge.Get(upbot.DBPathUsers, user, &userInfo)
+	userInfo := model.UserInfo{}
+	err := pudge.Get(model.DBPathUsers, user, &userInfo)
 	if err != nil {
 		log.Panic(err)
 	}
-	userInfo.WaitingFeedUrl = upbot.WaitingNone
+	userInfo.WaitingFeedUrl = model.WaitingNone
 	userInfo.Feeds[url] = false
 	Save(user, userInfo)
 	if err != nil {
@@ -510,7 +511,7 @@ func main() {
 	bt := &botStruct{
 		wg:        &sync.WaitGroup{},
 		ctx:       ctx,
-		up2tel:    make(chan upbot.JobInfo),
+		up2tel:    make(chan model.JobInfo),
 		admin:     make(chan string),
 		stop2user: make(chan string),
 	}

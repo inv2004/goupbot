@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	upbot "github.com/inv2004/goupbot/internal/upbot"
+	"github.com/inv2004/goupbot/internal/upbot/model"
 	"github.com/recoilme/pudge"
 )
 
@@ -17,17 +17,17 @@ type JobDesc struct {
 }
 
 func dumpUsers() {
-	fmt.Printf("%s:\n", upbot.DBPathUsers)
+	fmt.Printf("%s:\n", model.DBPathUsers)
 
-	keys, err := pudge.Keys(upbot.DBPathUsers, nil, 0, 0, true)
+	keys, err := pudge.Keys(model.DBPathUsers, nil, 0, 0, true)
 	if err != nil {
 		log.Panic(err)
 	}
 
 	for _, k := range keys {
-		v := upbot.UserInfo{}
+		v := model.UserInfo{}
 
-		err := pudge.Get(upbot.DBPathUsers, string(k), &v)
+		err := pudge.Get(model.DBPathUsers, string(k), &v)
 		if err != nil {
 			log.Panic(err)
 		}
@@ -37,9 +37,9 @@ func dumpUsers() {
 }
 
 func dumpJobs() {
-	fmt.Printf("%s:\n", upbot.DBPathJobs)
+	fmt.Printf("%s:\n", model.DBPathJobs)
 
-	keys, err := pudge.Keys(upbot.DBPathJobs, nil, 0, 0, true)
+	keys, err := pudge.Keys(model.DBPathJobs, nil, 0, 0, true)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -47,8 +47,8 @@ func dumpJobs() {
 	data := make([]JobDesc, len(keys))
 
 	for _, k := range keys {
-		v := upbot.JobValue{}
-		err := pudge.Get(upbot.DBPathJobs, k, &v)
+		v := model.JobValue{}
+		err := pudge.Get(model.DBPathJobs, k, &v)
 		if err != nil {
 			log.Panic(err)
 		}
