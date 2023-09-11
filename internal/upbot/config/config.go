@@ -2,8 +2,8 @@ package config
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"log"
+	"os"
 	"time"
 )
 
@@ -18,7 +18,7 @@ type Config struct {
 }
 
 const (
-	ConfigFile = "conf/config.json"
+	ConfigFile = "config.json"
 )
 
 var config Config
@@ -36,7 +36,7 @@ func GetAdmin() string {
 }
 
 func init() {
-	str, err := ioutil.ReadFile(ConfigFile)
+	str, err := os.ReadFile(ConfigFile)
 	if err != nil {
 		log.Panic(err)
 	}

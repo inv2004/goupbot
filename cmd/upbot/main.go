@@ -33,7 +33,7 @@ type botStruct struct {
 func fetchRss(userInfo model.UserInfo, url string, dryRun bool, bt *botStruct) error {
 	log.WithField("user", userInfo.ID).Info("fetching for")
 
-	ctx, cancel := context.WithTimeout(bt.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(bt.ctx, 30*time.Second)
 	defer cancel()
 
 	fp := gofeed.NewParser()
