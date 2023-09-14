@@ -16,6 +16,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const AdminMessage = "<b>Admin Message</b>\n"
+
 func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo int) (err error) {
 	text = strings.ReplaceAll(text, "<br />", "\n")
 	text = strings.ReplaceAll(text, "<br/>", "\n")
@@ -158,7 +160,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 				logrus.Panic(err)
 			}
 		}
-		if userInfo.Active == false {
+		if !userInfo.Active {
 			reply = "Type /start to resume"
 			return
 		}
@@ -259,6 +261,11 @@ func Start(bt *bot.BotStruct) {
 		logrus.Panic(err)
 	}
 
+	err = SendMsgToUser(bot, config.GetAdmin(), AdminMessage+"bot is up")
+	if err != nil {
+		logrus.Panic(err)
+	}
+
 	for {
 		select {
 		case update := <-updates:
@@ -289,13 +296,13 @@ func Start(bt *bot.BotStruct) {
 				logrus.Panic(err)
 			}
 		case msg := <-bt.Admin:
-			err := SendMsgToUser(bot, config.GetAdmin(), "<b>Admin Message</b>\n"+msg)
+			err := SendMsgToUser(bot, config.GetAdmin(), AdminMessage+msg)
 			if err != nil {
 				logrus.Panic(err)
 			}
 		case <-bt.Ctx.Done():
 			logrus.Debug("telegram: done")
-			err := SendMsgToUser(bot, config.GetAdmin(), "bot is going down")
+			err := SendMsgToUser(bot, config.GetAdmin(), AdminMessage+"bot is going down")
 			if err != nil {
 				logrus.Panic(err)
 			}

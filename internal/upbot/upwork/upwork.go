@@ -23,14 +23,33 @@ func HasActiveFeeds(userInfo *model.UserInfo) bool {
 	return false
 }
 
+func repeatURLRequest(bt *bot.BotStruct, fp *gofeed.Parser, url string, times int) (result *gofeed.Feed, err error) {
+	ctx, cancel := context.WithTimeout(bt.Ctx, 5*time.Second)
+	defer cancel()
+
+	i := 0
+	for {
+		if result, err = fp.ParseURLWithContext(url, ctx); err != nil {
+			i++
+			if i == times {
+				break
+			}
+			if err != nil {
+				time.Sleep(1 * time.Second)
+			}
+		} else {
+			return result, nil
+		}
+	}
+
+	return result, err
+}
+
 func FetchRss(userInfo model.UserInfo, url string, dryRun bool, bt *bot.BotStruct) error {
 	logrus.WithField("user", userInfo.ID).Info("fetching for")
 
-	ctx, cancel := context.WithTimeout(bt.Ctx, 30*time.Second)
-	defer cancel()
-
 	fp := gofeed.NewParser()
-	feed, err := fp.ParseURLWithContext(url, ctx)
+	feed, err := repeatURLRequest(bt, fp, url, 3)
 	if err != nil {
 		return err
 	}
@@ -157,7 +176,7 @@ func AddChannel(user string, url string, bt *bot.BotStruct) error {
 		return err
 	}
 
-	if NActiveFeeds(&userInfo) == 1 {
+	if NActiveFeeds(&userInfo) >= 1 {
 		bt.Wg.Add(1)
 		go FetchUser(userInfo.ID, bt)
 	}
