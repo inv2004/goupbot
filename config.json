@@ -4,6 +4,6 @@
     "admin": "AdminUser"
   },
   "feed": {
-    "delay": 60
+    "delay": 300
   }
 }
