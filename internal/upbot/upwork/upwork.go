@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/inv2004/goupbot/internal/upbot/bot"
@@ -14,9 +15,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const TitleSuffix = " | upwork.com"
+
 func HasActiveFeeds(userInfo *model.UserInfo) bool {
 	for _, v := range userInfo.Feeds {
-		if v {
+		if v.IsActive {
 			return true
 		}
 	}
@@ -45,16 +48,19 @@ func repeatURLRequest(bt *bot.BotStruct, fp *gofeed.Parser, url string, times in
 	return result, err
 }
 
-func FetchRss(userInfo model.UserInfo, url string, dryRun bool, bt *bot.BotStruct) error {
-	logrus.WithField("user", userInfo.ID).Info("fetching for")
+func FetchRss(userInfo model.UserInfo, fd model.FeedInfo, dryRun bool, bt *bot.BotStruct) (string, error) {
+	logrus.WithField("user", userInfo.ID).Info("fetching for: " + fd.Title)
 
 	fp := gofeed.NewParser()
-	feed, err := repeatURLRequest(bt, fp, url, 3)
+	feed, err := repeatURLRequest(bt, fp, fd.Url, 3)
 	if err != nil {
-		return err
+		return "", err
 	}
+
+	title := strings.TrimSuffix(feed.Title, TitleSuffix)
+
 	logrus.WithField("user", userInfo.ID).Debug("Published: ", feed.Published)
-	logrus.WithField("user", userInfo.ID).Debug("Title: ", feed.Published)
+	logrus.WithField("user", userInfo.ID).Debug("Title: ", title)
 
 	newCounter := 0
 
@@ -89,7 +95,7 @@ func FetchRss(userInfo model.UserInfo, url string, dryRun bool, bt *bot.BotStruc
 		logrus.WithField("counter", newCounter).Info("New")
 	}
 
-	return nil
+	return title, nil
 }
 
 func FetchUser(user string, bt *bot.BotStruct) {
@@ -99,33 +105,38 @@ func FetchUser(user string, bt *bot.BotStruct) {
 	logrus.WithField("user", user).Info("fetchUser is started")
 
 	for {
-		select {
-		case <-time.After(config.GetDelay()):
-			userInfo := model.UserInfo{}
-			err := pudge.Get(model.DBPathUsers, user, &userInfo)
-			if err != nil {
-				logrus.Panic(err)
-			}
+		userInfo := model.UserInfo{}
+		err := pudge.Get(model.DBPathUsers, user, &userInfo)
+		if err != nil {
+			logrus.Panic(err)
+		}
 
+		if !HasActiveFeeds(&userInfo) {
+			logrus.WithField("user", userInfo.ID).Warn("no active feeds found for user")
+			return
+		}
+
+		pullTimeout := userInfo.Pull
+		if pullTimeout == 0 {
+			pullTimeout = config.GetDelay()
+		}
+
+		select {
+		case <-time.After(pullTimeout):
 			if !userInfo.Active {
 				logrus.WithField("user", userInfo.ID).Warn("user is not active")
 				return
 			}
 
-			for url, active := range userInfo.Feeds {
-				if !active {
+			for _, v := range userInfo.Feeds {
+				if !v.IsActive {
 					continue
 				}
-				err := FetchRss(userInfo, url, false, bt)
+				_, err := FetchRss(userInfo, v, false, bt)
 				if err != nil {
 					logrus.Error(err)
 					bt.Admin <- err.Error()
 				}
-			}
-
-			if !HasActiveFeeds(&userInfo) {
-				logrus.WithField("user", userInfo.ID).Warn("no active feeds found for user")
-				return
 			}
 		case <-bt.Ctx.Done():
 			logrus.WithField("user", user).Debug("stop fetch")
@@ -160,20 +171,20 @@ func Save(user string, userInfo model.UserInfo) {
 	}
 }
 
-func AddChannel(user string, url string, bt *bot.BotStruct) error {
+func AddChannel(user string, url string, bt *bot.BotStruct) (string, error) {
 	userInfo := model.UserInfo{}
 	err := pudge.Get(model.DBPathUsers, user, &userInfo)
 	if err != nil {
 		log.Panic(err)
 	}
-	err = FetchRss(userInfo, url, true, bt)
+	title, err := FetchRss(userInfo, model.FeedInfo{Title: "", Url: url}, true, bt)
 	userInfo.WaitingFeedUrl = model.WaitingNone
 	if err == nil {
-		userInfo.Feeds[url] = true
+		userInfo.Feeds = append(userInfo.Feeds, model.FeedInfo{IsActive: true, Title: title, Url: url})
 	}
 	Save(user, userInfo)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if NActiveFeeds(&userInfo) >= 1 {
@@ -181,17 +192,22 @@ func AddChannel(user string, url string, bt *bot.BotStruct) error {
 		go FetchUser(userInfo.ID, bt)
 	}
 
-	return nil
+	return title, nil
 }
 
-func DelChannel(user string, url string, bt *bot.BotStruct) error {
+func DelChannel(user string, idx int, bt *bot.BotStruct) error {
 	userInfo := model.UserInfo{}
 	err := pudge.Get(model.DBPathUsers, user, &userInfo)
 	if err != nil {
 		log.Panic(err)
 	}
 	userInfo.WaitingFeedUrl = model.WaitingNone
-	userInfo.Feeds[url] = false
+
+	if !(0 <= idx && idx < len(userInfo.Feeds)) {
+		return errors.New("incorrect index to delete")
+	}
+
+	userInfo.Feeds = append(userInfo.Feeds[:idx], userInfo.Feeds[idx+1:]...)
 	Save(user, userInfo)
 	if err != nil {
 		if !errors.Is(err, pudge.ErrKeyNotFound) {
@@ -209,7 +225,7 @@ func DelChannel(user string, url string, bt *bot.BotStruct) error {
 
 func NActiveFeeds(userInfo *model.UserInfo) (result int) {
 	for _, v := range userInfo.Feeds {
-		if v {
+		if v.IsActive {
 			result += 1
 		}
 	}

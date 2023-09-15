@@ -19,12 +19,19 @@ const (
 	DBPathUsers = "data/users"
 )
 
+type FeedInfo struct {
+	IsActive bool
+	Title    string
+	Url      string
+}
+
 type UserInfo struct {
 	ID             string
 	ChannelID      int64
+	Pull           time.Duration
 	Active         bool
 	WaitingFeedUrl WaitingFeedKind
-	Feeds          map[string]bool
+	Feeds          []FeedInfo
 }
 
 type JobInfoKey struct {

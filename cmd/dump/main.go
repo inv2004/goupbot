@@ -32,7 +32,12 @@ func dumpUsers() {
 			log.Panic(err)
 		}
 
+		feeds := v.Feeds
+		v.Feeds = v.Feeds[0:0]
 		fmt.Printf("  \"%s\" %v\n", k, v)
+		for i, f := range feeds {
+			fmt.Printf("    %d) %v\n", i+1, f)
+		}
 	}
 }
 
@@ -68,5 +73,5 @@ func dumpJobs() {
 
 func main() {
 	dumpUsers()
-	dumpJobs()
+	// dumpJobs()
 }

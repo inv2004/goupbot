@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,7 +128,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				userInfo.ID = user
 				userInfo.ChannelID = msg.Chat.ID
-				userInfo.Feeds = make(map[string]bool)
+				userInfo.Feeds = []model.FeedInfo{}
 			}
 		}
 
@@ -137,6 +138,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		}
 
 		userInfo.Active = true
+		userInfo.Pull = config.GetDelay()
 		err = pudge.Set(model.DBPathUsers, user, userInfo)
 		if err != nil {
 			logrus.Panic(err)
@@ -231,17 +233,28 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 			}
 		}
 
-		i := 0
-		for k, v := range userInfo.Feeds {
-			if !v {
+		for i, v := range userInfo.Feeds {
+			if !v.IsActive {
 				continue
 			}
-			reply += fmt.Sprintf("%d) %s\n", i+1, k)
+			reply += fmt.Sprintf(`%d) <a href="%s">%s</a><br/>`, i+1, v.Url, v.Title)
 			i += 1
 		}
-		if i == 0 {
+		if len(userInfo.Feeds) == 0 {
 			reply = "Empty"
 		}
+	case "/pull 1m":
+		userInfo := model.UserInfo{}
+		err := pudge.Get(model.DBPathUsers, user, &userInfo)
+		if err != nil {
+			logrus.Panic(err)
+		}
+		userInfo.Pull = 60 * time.Second
+		err = pudge.Set(model.DBPathUsers, user, userInfo)
+		if err != nil {
+			logrus.Panic(err)
+		}
+		reply = "ok"
 	default:
 		userInfo := model.UserInfo{}
 		err := pudge.Get(model.DBPathUsers, user, &userInfo)
@@ -250,15 +263,20 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		}
 		switch userInfo.WaitingFeedUrl {
 		case model.WaitingAdd:
-			err = upwork.AddChannel(user, text, bt)
+			title, err := upwork.AddChannel(user, text, bt)
 			if err != nil {
 				reply = err.Error()
 				return
 			}
 
-			reply = "Added succesfully. Default pull interval is 1 minute"
+			reply = fmt.Sprintf("<b>%s</b> added succesfully. Default pull interval is 5 minutes. You will receive new jobs from the moment", title)
 		case model.WaitingDel:
-			err = upwork.DelChannel(user, text, bt)
+			idx, err := strconv.Atoi(text)
+			if err != nil {
+				reply = "number expected"
+				return
+			}
+			err = upwork.DelChannel(user, idx-1, bt)
 			if err != nil {
 				reply = err.Error()
 				return
@@ -295,7 +313,7 @@ func Start(bt *bot.BotStruct) {
 
 	err = SendMsgToUser(bot, config.GetAdmin(), AdminMessage+"bot is up")
 	if err != nil {
-		logrus.Panic(err)
+		logrus.Warn(err)
 	}
 
 	for {
