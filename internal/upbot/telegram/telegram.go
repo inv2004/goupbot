@@ -18,7 +18,34 @@ import (
 
 const AdminMessage = "<b>Admin Message</b>\n"
 
+const imgUrl = "./rss.png"
+
+func sendWhere(bot *tgbotapi.BotAPI, channel int64, replyTo int) (err error) {
+	pic := tgbotapi.NewPhotoUpload(channel, imgUrl)
+
+	if replyTo > 0 {
+		pic.ReplyToMessageID = replyTo
+	}
+
+	_, err = bot.Send(pic)
+	if err != nil {
+		return err
+	}
+
+	msg := tgbotapi.NewMessage(channel, "paste rss url to add here:")
+	_, err = bot.Send(msg)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo int) (err error) {
+	if text == "/where" {
+		return sendWhere(bot, channel, replyTo)
+	}
+
 	text = strings.ReplaceAll(text, "<br />", "\n")
 	text = strings.ReplaceAll(text, "<br/>", "\n")
 	text = strings.ReplaceAll(text, "<br>", "\n")
@@ -33,6 +60,7 @@ func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo 
 	}
 
 	msg := tgbotapi.NewMessage(channel, text)
+
 	msg.ParseMode = tgbotapi.ModeHTML
 	msg.DisableWebPagePreview = true
 
@@ -169,7 +197,11 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		if err != nil {
 			logrus.Panic(err)
 		}
-		reply = "Paste rss url to add here:"
+		reply = `To help find rss on upwork: /where.<br/>
+		or paste rss url to add here:`
+	case "/where":
+		reply = "/where"
+		return
 	case "/del":
 		userInfo := model.UserInfo{}
 		err := pudge.Get(model.DBPathUsers, user, &userInfo)
