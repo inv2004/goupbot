@@ -26,7 +26,7 @@ type FeedInfo struct {
 }
 
 type UserInfo struct {
-	ID             string
+	UserName       string
 	ChannelID      int64
 	Pull           time.Duration
 	Active         bool

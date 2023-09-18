@@ -42,6 +42,13 @@ func sendWhere(bot *tgbotapi.BotAPI, channel int64, replyTo int) (err error) {
 	return nil
 }
 
+func escapeHtml(s string) (result string) {
+	result = s
+	result = strings.ReplaceAll(result, "<", "&lt;")
+	result = strings.ReplaceAll(result, ">", "&gt;")
+	return
+}
+
 func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo int) (err error) {
 	if text == "/where" {
 		return sendWhere(bot, channel, replyTo)
@@ -126,7 +133,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		err := pudge.Get(model.DBPathUsers, user, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
-				userInfo.ID = user
+				userInfo.UserName = user
 				userInfo.ChannelID = msg.Chat.ID
 				userInfo.Feeds = []model.FeedInfo{}
 			}
@@ -147,7 +154,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		if upwork.HasActiveFeeds(&userInfo) {
 			feedInfo = "You have some channels already, check with /list\n\n"
 			bt.Wg.Add(1)
-			go upwork.FetchUser(userInfo.ID, bt)
+			go upwork.FetchUser(userInfo.UserName, bt)
 		}
 
 		reply = "Thank you for subscribing the bot.\n\n" + feedInfo + "Please add feed channels by /add command or /help for help"
@@ -200,7 +207,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 			logrus.Panic(err)
 		}
 		reply = `To help find rss on upwork: /where.<br/>
-		or paste rss url to add here:`
+		or paste rss URL to add here:`
 	case "/where":
 		reply = "/where"
 		return
@@ -220,7 +227,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		if err != nil {
 			logrus.Panic(err)
 		}
-		reply = "Paste rss url to delete here:"
+		reply = "Paste rss number to delete here:"
 	case "/list":
 		userInfo := model.UserInfo{}
 		err := pudge.Get(model.DBPathUsers, user, &userInfo)
@@ -265,7 +272,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		case model.WaitingAdd:
 			title, err := upwork.AddChannel(user, text, bt)
 			if err != nil {
-				reply = err.Error()
+				reply = escapeHtml(err.Error())
 				return
 			}
 
@@ -278,7 +285,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 			}
 			err = upwork.DelChannel(user, idx-1, bt)
 			if err != nil {
-				reply = err.Error()
+				reply = escapeHtml(err.Error())
 				return
 			}
 
@@ -300,6 +307,10 @@ func Start(bt *bot.BotStruct) {
 	}
 
 	bot.Debug = false
+
+	defer func() {
+		SendMsgToUser(bot, config.GetAdmin(), AdminMessage+"bot is going down")
+	}()
 
 	logrus.WithField("bot", bot.Self.UserName).Info("Authorized on account")
 
@@ -326,7 +337,6 @@ func Start(bt *bot.BotStruct) {
 			logrus.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
 
 			reply := processMessage(update.Message, bt)
-
 			err := SendMsgToChannel(bot, update.Message.Chat.ID, reply, update.Message.MessageID)
 			if err != nil {
 				logrus.Panic(err)

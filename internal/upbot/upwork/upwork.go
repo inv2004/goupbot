@@ -49,7 +49,7 @@ func repeatURLRequest(bt *bot.BotStruct, fp *gofeed.Parser, url string, times in
 }
 
 func FetchRss(userInfo model.UserInfo, fd model.FeedInfo, dryRun bool, bt *bot.BotStruct) (string, error) {
-	logrus.WithField("user", userInfo.ID).Info("fetching for: " + fd.Title)
+	logrus.WithField("user", userInfo.UserName).Info("fetching for: " + fd.Title)
 
 	fp := gofeed.NewParser()
 	feed, err := repeatURLRequest(bt, fp, fd.Url, 3)
@@ -59,13 +59,13 @@ func FetchRss(userInfo model.UserInfo, fd model.FeedInfo, dryRun bool, bt *bot.B
 
 	title := strings.TrimSuffix(feed.Title, TitleSuffix)
 
-	logrus.WithField("user", userInfo.ID).Debug("Published: ", feed.Published)
-	logrus.WithField("user", userInfo.ID).Debug("Title: ", title)
+	logrus.WithField("user", userInfo.UserName).Debug("Published: ", feed.Published)
+	logrus.WithField("user", userInfo.UserName).Debug("Title: ", title)
 
 	newCounter := 0
 
 	for _, item := range feed.Items {
-		key := model.JobInfoKey{User: userInfo.ID, GUID: item.GUID}
+		key := model.JobInfoKey{User: userInfo.UserName, GUID: item.GUID}
 
 		hasKey, err := pudge.Has(model.DBPathJobs, key.Key())
 		if err != nil {
@@ -112,7 +112,7 @@ func FetchUser(user string, bt *bot.BotStruct) {
 		}
 
 		if !HasActiveFeeds(&userInfo) {
-			logrus.WithField("user", userInfo.ID).Warn("no active feeds found for user")
+			logrus.WithField("user", userInfo.UserName).Warn("no active feeds found for user")
 			return
 		}
 
@@ -124,7 +124,7 @@ func FetchUser(user string, bt *bot.BotStruct) {
 		select {
 		case <-time.After(pullTimeout):
 			if !userInfo.Active {
-				logrus.WithField("user", userInfo.ID).Warn("user is not active")
+				logrus.WithField("user", userInfo.UserName).Warn("user is not active")
 				return
 			}
 
@@ -177,19 +177,17 @@ func AddChannel(user string, url string, bt *bot.BotStruct) (string, error) {
 	if err != nil {
 		log.Panic(err)
 	}
-	title, err := FetchRss(userInfo, model.FeedInfo{Title: "", Url: url}, true, bt)
 	userInfo.WaitingFeedUrl = model.WaitingNone
-	if err == nil {
-		userInfo.Feeds = append(userInfo.Feeds, model.FeedInfo{IsActive: true, Title: title, Url: url})
-	}
-	Save(user, userInfo)
+	title, err := FetchRss(userInfo, model.FeedInfo{Title: "", Url: url}, true, bt)
 	if err != nil {
 		return "", err
 	}
+	userInfo.Feeds = append(userInfo.Feeds, model.FeedInfo{IsActive: true, Title: title, Url: url})
+	Save(user, userInfo)
 
 	if NActiveFeeds(&userInfo) >= 1 {
 		bt.Wg.Add(1)
-		go FetchUser(userInfo.ID, bt)
+		go FetchUser(userInfo.UserName, bt)
 	}
 
 	return title, nil
@@ -217,7 +215,7 @@ func DelChannel(user string, idx int, bt *bot.BotStruct) error {
 
 	if NActiveFeeds(&userInfo) == 1 {
 		bt.Wg.Add(1)
-		go FetchUser(userInfo.ID, bt)
+		go FetchUser(userInfo.UserName, bt)
 	}
 
 	return nil
