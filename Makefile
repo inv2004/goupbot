@@ -11,4 +11,3 @@ run:
 
 dump:
 	go run cmd/dump/main.go
-

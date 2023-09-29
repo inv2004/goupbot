@@ -73,5 +73,5 @@ func dumpJobs() {
 
 func main() {
 	dumpUsers()
-	// dumpJobs()
+	dumpJobs()
 }

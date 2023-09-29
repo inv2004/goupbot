@@ -23,6 +23,11 @@ func main() {
 		FullTimestamp: true,
 	})
 
+	if len(os.Args) == 2 && os.Args[1] == "migrate" {
+		telegram.MigrateUserId()
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	bt := &bot.BotStruct{

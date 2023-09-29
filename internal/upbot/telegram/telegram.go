@@ -58,6 +58,8 @@ func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo 
 	text = strings.ReplaceAll(text, "<br/>", "\n")
 	text = strings.ReplaceAll(text, "<br>", "\n")
 	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	text = strings.ReplaceAll(text, "&quot;", `"`)
+	text = strings.ReplaceAll(text, "&amp;", "&")
 
 	if len(text) > 4096 {
 		text = text[:4092]
@@ -106,7 +108,7 @@ func SendMsgToUser(bot *tgbotapi.BotAPI, user string, text string) error {
 }
 
 func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
-	user := msg.From.UserName
+	userId := fmt.Sprintf("%d", msg.From.ID)
 	text := msg.Text
 	// words := strings.Fields(text)
 	// if len(words) == 0 {
@@ -130,10 +132,10 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 `
 	case "/start":
 		userInfo := model.UserInfo{}
-		err := pudge.Get(model.DBPathUsers, user, &userInfo)
+		err := pudge.Get(model.DBPathUsers, userId, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
-				userInfo.UserName = user
+				userInfo.UserName = msg.From.UserName
 				userInfo.ChannelID = msg.Chat.ID
 				userInfo.Feeds = []model.FeedInfo{}
 			}
@@ -146,7 +148,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 
 		userInfo.Active = true
 		userInfo.Pull = config.GetDelay()
-		err = pudge.Set(model.DBPathUsers, user, userInfo)
+		err = pudge.Set(model.DBPathUsers, userId, userInfo)
 		if err != nil {
 			logrus.Panic(err)
 		}
@@ -160,7 +162,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		reply = "Thank you for subscribing the bot.\n\n" + feedInfo + "Please add feed channels by /add command or /help for help"
 	case "/stop":
 		userInfo := model.UserInfo{}
-		err := pudge.Get(model.DBPathUsers, user, &userInfo)
+		err := pudge.Get(model.DBPathUsers, userId, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				reply = "nothing to stop"
@@ -177,8 +179,8 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 			return
 		}
 		userInfo.Active = false
-		logrus.WithField("user", user).WithField("userInfo", userInfo).Debug("Store")
-		err = pudge.Set(model.DBPathUsers, user, &userInfo)
+		logrus.WithField("user", userId).WithField("userInfo", userInfo).Debug("Store")
+		err = pudge.Set(model.DBPathUsers, userId, &userInfo)
 		if err != nil {
 			logrus.Panic(err)
 		}
@@ -188,7 +190,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		reply = "pong"
 	case "/add":
 		userInfo := model.UserInfo{}
-		err := pudge.Get(model.DBPathUsers, user, &userInfo)
+		err := pudge.Get(model.DBPathUsers, userId, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				reply = "Type /start first"
@@ -202,7 +204,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 			return
 		}
 		userInfo.WaitingFeedUrl = model.WaitingAdd
-		err = pudge.Set(model.DBPathUsers, user, userInfo)
+		err = pudge.Set(model.DBPathUsers, userId, userInfo)
 		if err != nil {
 			logrus.Panic(err)
 		}
@@ -213,7 +215,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		return
 	case "/del":
 		userInfo := model.UserInfo{}
-		err := pudge.Get(model.DBPathUsers, user, &userInfo)
+		err := pudge.Get(model.DBPathUsers, userId, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				reply = "Type /start first"
@@ -223,14 +225,14 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 			}
 		}
 		userInfo.WaitingFeedUrl = model.WaitingDel
-		err = pudge.Set(model.DBPathUsers, user, userInfo)
+		err = pudge.Set(model.DBPathUsers, userId, userInfo)
 		if err != nil {
 			logrus.Panic(err)
 		}
 		reply = "Paste rss number to delete here:"
 	case "/list":
 		userInfo := model.UserInfo{}
-		err := pudge.Get(model.DBPathUsers, user, &userInfo)
+		err := pudge.Get(model.DBPathUsers, userId, &userInfo)
 		if err != nil {
 			if errors.Is(err, pudge.ErrKeyNotFound) {
 				reply = "Type /start first"
@@ -252,25 +254,25 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		}
 	case "/pull 1m":
 		userInfo := model.UserInfo{}
-		err := pudge.Get(model.DBPathUsers, user, &userInfo)
+		err := pudge.Get(model.DBPathUsers, userId, &userInfo)
 		if err != nil {
 			logrus.Panic(err)
 		}
 		userInfo.Pull = 60 * time.Second
-		err = pudge.Set(model.DBPathUsers, user, userInfo)
+		err = pudge.Set(model.DBPathUsers, userId, userInfo)
 		if err != nil {
 			logrus.Panic(err)
 		}
 		reply = "ok"
 	default:
 		userInfo := model.UserInfo{}
-		err := pudge.Get(model.DBPathUsers, user, &userInfo)
+		err := pudge.Get(model.DBPathUsers, userId, &userInfo)
 		if err != nil {
 			logrus.Panic(err)
 		}
 		switch userInfo.WaitingFeedUrl {
 		case model.WaitingAdd:
-			title, err := upwork.AddChannel(user, text, bt)
+			title, err := upwork.AddChannel(userId, text, bt)
 			if err != nil {
 				reply = escapeHtml(err.Error())
 				return
@@ -283,7 +285,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 				reply = "number expected"
 				return
 			}
-			err = upwork.DelChannel(user, idx-1, bt)
+			err = upwork.DelChannel(userId, idx-1, bt)
 			if err != nil {
 				reply = escapeHtml(err.Error())
 				return
@@ -369,4 +371,65 @@ func Start(bt *bot.BotStruct) {
 			return
 		}
 	}
+}
+
+func MigrateUserId() {
+	keys, err := pudge.Keys(model.DBPathUsers, nil, 0, 0, true)
+	if err != nil {
+		logrus.Panic(err)
+	}
+
+	db, err := pudge.Open(model.DBPathUsers, &pudge.Config{})
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	m := map[string]string{}
+
+	for _, user := range keys {
+		u := string(user)
+		logrus.Println(u)
+		userInfo := model.UserInfo{}
+		err := db.Get(user, &userInfo)
+		if err != nil {
+			panic(err)
+		}
+		userInfo.UserName = u
+		// userInfo.Feeds = userInfo.Feeds[0:0]
+		logrus.Infof("%+v", userInfo)
+		db.Delete(u)
+		logrus.Infof("%+v", userInfo)
+		userInfo.UserName = u
+		db.Set(fmt.Sprintf("%d", userInfo.ChannelID), userInfo)
+		m[u] = fmt.Sprintf("%d", userInfo.ChannelID)
+	}
+
+	keys, err = pudge.Keys(model.DBPathJobs, nil, 0, 0, true)
+	if err != nil {
+		logrus.Panic(err)
+	}
+
+	db2, err := pudge.Open(model.DBPathJobs, &pudge.Config{})
+	if err != nil {
+		panic(err)
+	}
+	defer db2.Close()
+	for _, jobB := range keys {
+		job := string(jobB)
+		logrus.Println(job)
+		jobValue := model.JobValue{}
+		fmt.Println("DDD0: ", job)
+		err := db2.Get(job, &jobValue)
+		if err != nil {
+			panic(err)
+		}
+		logrus.Infof("%+v", jobValue)
+		db2.Delete(job)
+		kk := strings.Split(string(job), ";")
+		newK := model.JobInfoKey{User: m[kk[0]], GUID: kk[1]}.Key()
+		fmt.Println("DDD1: ", newK)
+		db2.Set(newK, jobValue)
+	}
+
 }

@@ -110,6 +110,7 @@ func FetchUser(user string, bt *bot.BotStruct) {
 		if err != nil {
 			logrus.Panic(err)
 		}
+		userInfo.UserName = user
 
 		if !HasActiveFeeds(&userInfo) {
 			logrus.WithField("user", userInfo.UserName).Warn("no active feeds found for user")
@@ -164,16 +165,9 @@ func Start(bt *bot.BotStruct) {
 	}
 }
 
-func Save(user string, userInfo model.UserInfo) {
-	err := pudge.Set(model.DBPathUsers, user, userInfo)
-	if err != nil {
-		logrus.Panic(err)
-	}
-}
-
-func AddChannel(user string, url string, bt *bot.BotStruct) (string, error) {
+func AddChannel(userId string, url string, bt *bot.BotStruct) (string, error) {
 	userInfo := model.UserInfo{}
-	err := pudge.Get(model.DBPathUsers, user, &userInfo)
+	err := pudge.Get(model.DBPathUsers, userId, &userInfo)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -183,7 +177,10 @@ func AddChannel(user string, url string, bt *bot.BotStruct) (string, error) {
 		return "", err
 	}
 	userInfo.Feeds = append(userInfo.Feeds, model.FeedInfo{IsActive: true, Title: title, Url: url})
-	Save(user, userInfo)
+	err = pudge.Set(model.DBPathUsers, userId, userInfo)
+	if err != nil {
+		logrus.Panic(err)
+	}
 
 	if NActiveFeeds(&userInfo) >= 1 {
 		bt.Wg.Add(1)
@@ -193,9 +190,9 @@ func AddChannel(user string, url string, bt *bot.BotStruct) (string, error) {
 	return title, nil
 }
 
-func DelChannel(user string, idx int, bt *bot.BotStruct) error {
+func DelChannel(userId string, idx int, bt *bot.BotStruct) error {
 	userInfo := model.UserInfo{}
-	err := pudge.Get(model.DBPathUsers, user, &userInfo)
+	err := pudge.Get(model.DBPathUsers, userId, &userInfo)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -206,7 +203,11 @@ func DelChannel(user string, idx int, bt *bot.BotStruct) error {
 	}
 
 	userInfo.Feeds = append(userInfo.Feeds[:idx], userInfo.Feeds[idx+1:]...)
-	Save(user, userInfo)
+	err = pudge.Set(model.DBPathUsers, userId, userInfo)
+	if err != nil {
+		logrus.Panic(err)
+	}
+
 	if err != nil {
 		if !errors.Is(err, pudge.ErrKeyNotFound) {
 			return err
