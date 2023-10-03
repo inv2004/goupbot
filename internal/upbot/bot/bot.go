@@ -8,9 +8,8 @@ import (
 )
 
 type BotStruct struct {
-	Wg        *sync.WaitGroup
-	Ctx       context.Context
-	Up2tel    chan model.JobInfo
-	Admin     chan string
-	Stop2user chan string
+	Wg     *sync.WaitGroup
+	Ctx    context.Context
+	Up2tel chan model.JobInfo
+	Admin  chan string
 }

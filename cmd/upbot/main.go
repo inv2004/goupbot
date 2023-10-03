@@ -24,18 +24,18 @@ func main() {
 	})
 
 	if len(os.Args) == 2 && os.Args[1] == "migrate" {
-		telegram.MigrateUserId()
+		// telegram.MigrateUserId()
+		telegram.MigrateOneUser()
 		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	bt := &bot.BotStruct{
-		Wg:        &sync.WaitGroup{},
-		Ctx:       ctx,
-		Up2tel:    make(chan model.JobInfo),
-		Admin:     make(chan string),
-		Stop2user: make(chan string),
+		Wg:     &sync.WaitGroup{},
+		Ctx:    ctx,
+		Up2tel: make(chan model.JobInfo),
+		Admin:  make(chan string),
 	}
 
 	defer func() {

@@ -184,7 +184,6 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 		if err != nil {
 			logrus.Panic(err)
 		}
-		bt.Stop2user <- msg.From.UserName
 		reply = "Your user and feeds are suspended, Type /start to resume"
 	case "/ping":
 		reply = "pong"
@@ -373,63 +372,100 @@ func Start(bt *bot.BotStruct) {
 	}
 }
 
-func MigrateUserId() {
-	keys, err := pudge.Keys(model.DBPathUsers, nil, 0, 0, true)
-	if err != nil {
-		logrus.Panic(err)
-	}
-
-	db, err := pudge.Open(model.DBPathUsers, &pudge.Config{})
+func MigrateOneUser() {
+	db, err := pudge.Open(model.DBPathJobs, &pudge.Config{})
 	if err != nil {
 		panic(err)
 	}
 	defer db.Close()
 
-	m := map[string]string{}
-
-	for _, user := range keys {
-		u := string(user)
-		logrus.Println(u)
-		userInfo := model.UserInfo{}
-		err := db.Get(user, &userInfo)
-		if err != nil {
-			panic(err)
-		}
-		userInfo.UserName = u
-		// userInfo.Feeds = userInfo.Feeds[0:0]
-		logrus.Infof("%+v", userInfo)
-		db.Delete(u)
-		logrus.Infof("%+v", userInfo)
-		userInfo.UserName = u
-		db.Set(fmt.Sprintf("%d", userInfo.ChannelID), userInfo)
-		m[u] = fmt.Sprintf("%d", userInfo.ChannelID)
-	}
-
-	keys, err = pudge.Keys(model.DBPathJobs, nil, 0, 0, true)
-	if err != nil {
-		logrus.Panic(err)
-	}
-
-	db2, err := pudge.Open(model.DBPathJobs, &pudge.Config{})
+	keys, err := db.Keys(nil, 0, 0, true)
 	if err != nil {
 		panic(err)
 	}
-	defer db2.Close()
+
 	for _, jobB := range keys {
 		job := string(jobB)
-		logrus.Println(job)
-		jobValue := model.JobValue{}
-		fmt.Println("DDD0: ", job)
-		err := db2.Get(job, &jobValue)
-		if err != nil {
-			panic(err)
+		if strings.HasPrefix(job, "korchinskiiiy") {
+			logrus.Println(job)
+			parts := strings.Split(job, ";http")
+			pubVal := model.JobValue{}
+			db.Get(job, &pubVal)
+			db.Delete(job)
+			newK := model.JobInfoKey{User: "458656672", GUID: "http" + parts[1]}
+			db.Set(newK, pubVal)
 		}
-		logrus.Infof("%+v", jobValue)
-		db2.Delete(job)
-		kk := strings.Split(string(job), ";")
-		newK := model.JobInfoKey{User: m[kk[0]], GUID: kk[1]}.Key()
-		fmt.Println("DDD1: ", newK)
-		db2.Set(newK, jobValue)
+		// 		jobValue := model.JobValue{}
+		// 		fmt.Println("DDD0: ", job)
+		// 		err := db2.Get(job, &jobValue)
+		// 		if err != nil {
+		// 			panic(err)
+		// 		}
+		// 		logrus.Infof("%+v", jobValue)
+		// 		db2.Delete(job)
+		// 		kk := strings.Split(string(job), ";")
+		// 		newK := model.JobInfoKey{User: m[kk[0]], GUID: kk[1]}.Key()
+		// 		fmt.Println("DDD1: ", newK)
+		// 		db2.Set(newK, jobValue)
 	}
-
 }
+
+// func MigrateUserId() {
+// 	keys, err := pudge.Keys(model.DBPathUsers, nil, 0, 0, true)
+// 	if err != nil {
+// 		logrus.Panic(err)
+// 	}
+
+// 	db, err := pudge.Open(model.DBPathUsers, &pudge.Config{})
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	defer db.Close()
+
+// 	m := map[string]string{}
+
+// 	for _, user := range keys {
+// 		u := string(user)
+// 		logrus.Println(u)
+// 		userInfo := model.UserInfo{}
+// 		err := db.Get(user, &userInfo)
+// 		if err != nil {
+// 			panic(err)
+// 		}
+// 		userInfo.UserName = u
+// 		// userInfo.Feeds = userInfo.Feeds[0:0]
+// 		logrus.Infof("%+v", userInfo)
+// 		db.Delete(u)
+// 		logrus.Infof("%+v", userInfo)
+// 		userInfo.UserName = u
+// 		db.Set(fmt.Sprintf("%d", userInfo.ChannelID), userInfo)
+// 		m[u] = fmt.Sprintf("%d", userInfo.ChannelID)
+// 	}
+
+// 	keys, err = pudge.Keys(model.DBPathJobs, nil, 0, 0, true)
+// 	if err != nil {
+// 		logrus.Panic(err)
+// 	}
+
+// 	db2, err := pudge.Open(model.DBPathJobs, &pudge.Config{})
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	defer db2.Close()
+// 	for _, jobB := range keys {
+// 		job := string(jobB)
+// 		logrus.Println(job)
+// 		jobValue := model.JobValue{}
+// 		fmt.Println("DDD0: ", job)
+// 		err := db2.Get(job, &jobValue)
+// 		if err != nil {
+// 			panic(err)
+// 		}
+// 		logrus.Infof("%+v", jobValue)
+// 		db2.Delete(job)
+// 		kk := strings.Split(string(job), ";")
+// 		newK := model.JobInfoKey{User: m[kk[0]], GUID: kk[1]}.Key()
+// 		fmt.Println("DDD1: ", newK)
+// 		db2.Set(newK, jobValue)
+// 	}
+// }
