@@ -60,6 +60,7 @@ func SendMsgToChannel(bot *tgbotapi.BotAPI, channel int64, text string, replyTo 
 	text = strings.ReplaceAll(text, "&nbsp;", " ")
 	text = strings.ReplaceAll(text, "&quot;", `"`)
 	text = strings.ReplaceAll(text, "&amp;", "&")
+	text = strings.ReplaceAll(text, "&bull;", "•")
 
 	if len(text) > 4096 {
 		text = text[:4092]
