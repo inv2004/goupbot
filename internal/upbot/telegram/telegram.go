@@ -359,6 +359,7 @@ func Start(bt *bot.BotStruct) {
 				var tgErr tgbotapi.Error
 				if errors.As(err, &tgErr) {
 					if tgErr.Message == "Forbidden: bot was blocked by the user" {
+						logrus.Error(tgErr)
 						setActive(up.Key.User, false)
 					}
 				} else {
