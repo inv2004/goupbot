@@ -25,7 +25,8 @@ func main() {
 
 	if len(os.Args) == 2 && os.Args[1] == "migrate" {
 		// telegram.MigrateUserId()
-		telegram.MigrateOneUser()
+		// telegram.MigrateOneUser()
+		telegram.Cleanup()
 		return
 	}
 

@@ -21,6 +21,37 @@ const AdminMessage = "<b>Admin Message</b>\n"
 
 const imgUrl = "./rss.png"
 
+func setActive(userId string, active bool) string {
+	userInfo := model.UserInfo{}
+	err := pudge.Get(model.DBPathUsers, userId, &userInfo)
+	if err != nil {
+		if errors.Is(err, pudge.ErrKeyNotFound) {
+			return "nothing to stop"
+		}
+		logrus.Panic(err)
+	}
+	if active && active == userInfo.Active {
+		return "active already"
+	} else if !active && active == userInfo.Active {
+		return "suspended already"
+	}
+
+	if !active && len(userInfo.Feeds) == 0 {
+		return "no feeds to stop"
+	}
+	userInfo.Active = active
+	logrus.WithField("user", userId).WithField("userInfo", userInfo).Debug("Store")
+	err = pudge.Set(model.DBPathUsers, userId, &userInfo)
+	if err != nil {
+		logrus.Panic(err)
+	}
+	if active {
+		return "Your user and feeds are activated, Type /stop to suspend"
+	} else {
+		return "Your user and feeds are suspended, Type /start to resume"
+	}
+}
+
 func sendWhere(bot *tgbotapi.BotAPI, channel int64, replyTo int) (err error) {
 	pic := tgbotapi.NewPhotoUpload(channel, imgUrl)
 
@@ -162,30 +193,7 @@ func processMessage(msg *tgbotapi.Message, bt *bot.BotStruct) (reply string) {
 
 		reply = "Thank you for subscribing the bot.\n\n" + feedInfo + "Please add feed channels by /add command or /help for help"
 	case "/stop":
-		userInfo := model.UserInfo{}
-		err := pudge.Get(model.DBPathUsers, userId, &userInfo)
-		if err != nil {
-			if errors.Is(err, pudge.ErrKeyNotFound) {
-				reply = "nothing to stop"
-				return
-			}
-			logrus.Panic(err)
-		}
-		if !userInfo.Active {
-			reply = "stopped already"
-			return
-		}
-		if len(userInfo.Feeds) == 0 {
-			reply = "no feeds to stop"
-			return
-		}
-		userInfo.Active = false
-		logrus.WithField("user", userId).WithField("userInfo", userInfo).Debug("Store")
-		err = pudge.Set(model.DBPathUsers, userId, &userInfo)
-		if err != nil {
-			logrus.Panic(err)
-		}
-		reply = "Your user and feeds are suspended, Type /start to resume"
+		setActive(userId, false)
 	case "/ping":
 		reply = "pong"
 	case "/add":
@@ -341,14 +349,22 @@ func Start(bt *bot.BotStruct) {
 			reply := processMessage(update.Message, bt)
 			err := SendMsgToChannel(bot, update.Message.Chat.ID, reply, update.Message.MessageID)
 			if err != nil {
-				logrus.Panic(err)
+				logrus.Errorf("cannot send to chat_id = %d: %T: %s", update.Message.Chat.ID, err, err)
 			}
 		case up := <-bt.Up2tel:
 			logrus.WithField("key", up.Key).Debug("recv")
 
 			err := SendMsgToUser(bot, up.Key.User, up.RSS.Content)
 			if err != nil {
-				logrus.Panic(err)
+				var tgErr tgbotapi.Error
+				if errors.As(err, &tgErr) {
+					if tgErr.Message == "Forbidden: bot was blocked by the user" {
+						setActive(up.Key.User, false)
+					}
+				} else {
+					logrus.Errorf("cannot send to user = %s: %T: %s", up.Key.User, err, err)
+				}
+				continue
 			}
 
 			logrus.WithField("key", up.Key).Debug("saving")
@@ -470,3 +486,24 @@ func MigrateOneUser() {
 // 		db2.Set(newK, jobValue)
 // 	}
 // }
+
+func Cleanup() {
+	db, err := pudge.Open(model.DBPathJobs, &pudge.Config{})
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	keys, err := db.Keys(nil, 0, 0, true)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, jobK := range keys {
+		job := string(jobK)
+		if strings.Contains(job, "0001-01-01") {
+			fmt.Println(job)
+			// db.Delete(job)
+		}
+	}
+}
